@@ -6,6 +6,8 @@ export class SoulNotFoundError extends Data.TaggedError("SoulNotFoundError")<{
   readonly soulPath: string;
 }> {}
 
+export class NoSoulsFoundError extends Data.TaggedError("NoSoulsFoundError") {}
+
 export class ManifestParseError extends Data.TaggedError("ManifestParseError")<{
   readonly path: string;
   readonly cause: unknown;

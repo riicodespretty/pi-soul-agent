@@ -5,6 +5,7 @@ import { SoulSpecLoader } from "@/src/loader";
 import { suggestSouls } from "@/src/tools";
 import { ActiveSoulPersistence } from "@/src/persistence";
 import { buildSystemPrompt } from "@/src/system-prompt";
+import { NoSoulsFoundError } from "./errors";
 
 /**
  * Register the `/souls` command.
@@ -20,7 +21,7 @@ export function registerSoulsCommand(pi: ExtensionAPI, runtime: AppRuntime): voi
           const souls = yield* loader.getAllSouls();
 
           if (souls.length === 0) {
-            return { _tag: "empty" as const };
+            return yield* Effect.fail(new NoSoulsFoundError());
           }
 
           let message = "Available souls:\n\n";
@@ -42,18 +43,15 @@ export function registerSoulsCommand(pi: ExtensionAPI, runtime: AppRuntime): voi
 
           return { _tag: "souls" as const, message };
         }).pipe(
-          Effect.catchAllCause((cause) =>
-            Effect.sync(() =>
-              console.debug(`[commands] Error in /souls: ${Cause.pretty(cause)}`),
-            ).pipe(
-              Effect.andThen(
-                Effect.succeed({
-                  _tag: "error" as const,
-                  message: `Error listing souls: Unexpected error`,
-                }),
-              ),
-            ),
-          ),
+          Effect.catchTags({
+            NoSoulsFoundError: (_NoSoulsFoundError) => {
+              ctx.ui.notify(
+                "No souls found. Create a souls/ directory with soul.json files.",
+                "error",
+              );
+              return Effect.succeed(_NoSoulsFoundError.message);
+            },
+          }),
         ),
       );
 

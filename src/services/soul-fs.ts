@@ -1,5 +1,7 @@
 import { FileSystem } from "@effect/platform/FileSystem";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
+import { Path } from "@effect/platform";
+import os from "node:os";
 import {
   type Actuator,
   type Author,
@@ -20,16 +22,28 @@ import {
 } from "@/src/types";
 import { FileSystemError, ManifestParseError } from "@/src/errors";
 
+export function resolveOsHomeDir(env: NodeJS.ProcessEnv) {
+  return Option.getOrElse(
+    Option.firstSomeOf([Option.fromNullable(env.HOME), Option.fromNullable(env.USERPROFILE)]),
+    () => os.homedir(),
+  );
+}
+
 /**
  * Expand ~ to the user's home directory.
- * This is a sync boundary function — NOT an Effect.
- * Must be called before passing paths to @effect/platform FileSystem methods.
+ * Must be called inside an Effect context (yields Path).
  */
-export function expandHome(p: string): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "/home/user";
-  if (p === "~") return home;
-  if (p.startsWith("~/")) return `${home}/${p.slice(2)}`;
-  return p;
+export function expandHome(p: string) {
+  if (!p.startsWith("~/")) {
+    return Effect.succeed(p);
+  }
+
+  return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const homedir = resolveOsHomeDir(process.env);
+
+    return path.join(homedir, p.slice(2));
+  });
 }
 
 /**

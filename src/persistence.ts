@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
+import { Path } from "@effect/platform";
 import type { ActiveSoul } from "@/src/types";
 import { FileSystemError } from "@/src/errors";
 import { expandHome } from "@/src/services/soul-fs";
@@ -17,9 +18,9 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
        * Save the active soul to disk.
        * Creates the parent directory if it doesn't exist.
        */
-      const save = (soulName: string, level: number): Effect.Effect<void, FileSystemError> => {
+      const save = (soulName: string, level: number): Effect.Effect<void, FileSystemError, Path.Path> => {
         return Effect.gen(function* () {
-          const filePath = expandHome(ACTIVE_SOUL_PATH);
+          const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
           const dirPath = filePath.substring(0, filePath.lastIndexOf("/"));
 
           yield* fs.makeDirectory(dirPath, { recursive: true }).pipe(
@@ -44,9 +45,9 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
        * Load the active soul from disk.
        * Returns Option.none() if file doesn't exist or is corrupt.
        */
-      const load = (): Effect.Effect<Option.Option<ActiveSoul>, never> => {
+      const load = (): Effect.Effect<Option.Option<ActiveSoul>, never, Path.Path> => {
         return Effect.gen(function* () {
-          const filePath = expandHome(ACTIVE_SOUL_PATH);
+          const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
           const exists = yield* fs.exists(filePath);
           if (!exists) return Option.none();
 
@@ -69,9 +70,9 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
       /**
        * Clear (delete) the active soul file.
        */
-      const clear = (): Effect.Effect<void, FileSystemError> => {
+      const clear = (): Effect.Effect<void, FileSystemError, Path.Path> => {
         return Effect.gen(function* () {
-          const filePath = expandHome(ACTIVE_SOUL_PATH);
+          const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
           yield* fs.remove(filePath).pipe(
             Effect.catchAll(() => Effect.void), // removal failure not fatal
           );

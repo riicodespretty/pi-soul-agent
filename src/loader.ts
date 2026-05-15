@@ -24,7 +24,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
     const resolveSoulPath = (soulName: string) => {
       return Effect.gen(function* () {
         // Try as absolute/relative path first (matching reference findExactSoulPath)
-        const expandedDirect = expandHome(soulName);
+        const expandedDirect = yield* expandHome(soulName);
         const directExists = yield* fs.exists(expandedDirect);
         if (directExists) {
           return expandedDirect;
@@ -38,7 +38,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         // Check exact match across all search paths
         for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = expandHome(base);
+          const resolvedBase = yield* expandHome(base);
           const exactPath = `${resolvedBase}/${soulName}/soul.json`;
           const exists = yield* fs.exists(exactPath);
           if (exists) {
@@ -90,34 +90,24 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         if (level >= 2) {
           // Load SOUL.md (core persona)
           if (files.soul) {
-            manifest.soul_content = yield* readTextFile(fs, `${resolvedDir}/${files.soul}`).pipe(
-              Effect.catchAll(() => Effect.succeed(undefined)),
-            );
+            manifest.soul_content = yield* readTextFile(fs, `${resolvedDir}/${files.soul}`);
           }
 
           // Load IDENTITY.md
           if (files.identity) {
-            manifest.identity_content = yield* readTextFile(
-              fs,
-              `${resolvedDir}/${files.identity}`,
-            ).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+            manifest.identity_content = yield* readTextFile(fs, `${resolvedDir}/${files.identity}`);
           }
         }
 
         if (level >= 3) {
           // Load AGENTS.md
           if (files.agents) {
-            manifest.agents_content = yield* readTextFile(
-              fs,
-              `${resolvedDir}/${files.agents}`,
-            ).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+            manifest.agents_content = yield* readTextFile(fs, `${resolvedDir}/${files.agents}`);
           }
 
           // Load STYLE.md
           if (files.style) {
-            manifest.style_content = yield* readTextFile(fs, `${resolvedDir}/${files.style}`).pipe(
-              Effect.catchAll(() => Effect.succeed(undefined)),
-            );
+            manifest.style_content = yield* readTextFile(fs, `${resolvedDir}/${files.style}`);
           }
 
           // Load HEARTBEAT.md
@@ -125,7 +115,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
             manifest.heartbeat_content = yield* readTextFile(
               fs,
               `${resolvedDir}/${files.heartbeat}`,
-            ).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+            );
           }
 
           // Load USER_TEMPLATE.md
@@ -133,7 +123,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
             manifest.user_template_content = yield* readTextFile(
               fs,
               `${resolvedDir}/${files.user_template}`,
-            ).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+            );
           }
 
           // Load calibration examples
@@ -142,13 +132,13 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
               manifest.examples_good_content = yield* readTextFile(
                 fs,
                 `${resolvedDir}/${manifest.examples.good}`,
-              ).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+              );
             }
             if (manifest.examples.bad) {
               manifest.examples_bad_content = yield* readTextFile(
                 fs,
                 `${resolvedDir}/${manifest.examples.bad}`,
-              ).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+              );
             }
           }
         }
@@ -178,22 +168,16 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         const souls: string[] = [];
 
         for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = expandHome(base);
-          const baseExists = yield* fs
-            .exists(resolvedBase)
-            .pipe(Effect.catchAll(() => Effect.succeed(false)));
+          const resolvedBase = yield* expandHome(base);
+          const baseExists = yield* fs.exists(resolvedBase);
           if (!baseExists) continue;
 
-          const entries = yield* fs
-            .readDirectory(resolvedBase)
-            .pipe(Effect.catchAll(() => Effect.succeed([] as string[])));
+          const entries = yield* fs.readDirectory(resolvedBase);
 
           for (const entry of entries) {
             if (seen.has(entry)) continue;
             const soulJsonPath = `${resolvedBase}/${entry}/soul.json`;
-            const hasSoul = yield* fs
-              .exists(soulJsonPath)
-              .pipe(Effect.catchAll(() => Effect.succeed(false)));
+            const hasSoul = yield* fs.exists(soulJsonPath);
             if (hasSoul) {
               seen.add(entry);
               souls.push(entry);
@@ -222,5 +206,4 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       resolveSoulPath,
     } as const;
   }),
-  dependencies: [],
 }) {}

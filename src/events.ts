@@ -63,15 +63,19 @@ export function registerSessionStartHandler(pi: ExtensionAPI, runtime: AppRuntim
  * Register the `resources_discover` event handler.
  * Returns soul directories as prompt paths for resource discovery.
  */
-export function registerResourcesDiscoverHandler(pi: ExtensionAPI, _runtime: AppRuntime): void {
+export function registerResourcesDiscoverHandler(pi: ExtensionAPI, runtime: AppRuntime): void {
   pi.on("resources_discover", async (_event, _ctx) => {
     // Order matches reference: project-local first, then global
+    const [piSouls, clawSouls] = await Promise.all([
+      runtime.runPromise(expandHome("~/.pi/agent/souls")),
+      runtime.runPromise(expandHome("~/.openclaw/souls/clawsouls")),
+    ]);
     const result: ResourcesDiscoverResult = {
       promptPaths: [
         ".pi/souls",
         "./souls",
-        expandHome("~/.pi/agent/souls"),
-        expandHome("~/.openclaw/souls/clawsouls"),
+        piSouls,
+        clawSouls,
       ],
     };
     return result;
