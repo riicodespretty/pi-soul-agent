@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AppRuntime } from "./types";
@@ -130,12 +130,20 @@ export function registerLoadSoulTool(pi: ExtensionAPI, runtime: AppRuntime): voi
               isError: true,
             }),
           ),
-          Effect.catchAllCause((_cause) =>
-            Effect.succeed({
-              content: [{ type: "text" as const, text: `Error loading soul: Unexpected error` }],
-              details: {},
-              isError: true,
-            }),
+          Effect.catchAllCause((cause) =>
+            Effect.sync(() =>
+              console.debug(`[tools] Error in load_soul: ${Cause.pretty(cause)}`),
+            ).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  content: [
+                    { type: "text" as const, text: `Error loading soul: Unexpected error` },
+                  ],
+                  details: {},
+                  isError: true,
+                }),
+              ),
+            ),
           ),
         ),
         { signal },
@@ -194,12 +202,20 @@ export function registerListSoulsTool(pi: ExtensionAPI, runtime: AppRuntime): vo
             details: { souls },
           };
         }).pipe(
-          Effect.catchAllCause((_cause) =>
-            Effect.succeed({
-              content: [{ type: "text" as const, text: `Error listing souls: Unexpected error` }],
-              details: {},
-              isError: true,
-            }),
+          Effect.catchAllCause((cause) =>
+            Effect.sync(() =>
+              console.debug(`[tools] Error in list_souls: ${Cause.pretty(cause)}`),
+            ).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  content: [
+                    { type: "text" as const, text: `Error listing souls: Unexpected error` },
+                  ],
+                  details: {},
+                  isError: true,
+                }),
+              ),
+            ),
           ),
         ),
         { signal },
@@ -317,14 +333,20 @@ export function registerSoulInfoTool(pi: ExtensionAPI, runtime: AppRuntime): voi
               isError: true,
             }),
           ),
-          Effect.catchAllCause((_cause) =>
-            Effect.succeed({
-              content: [
-                { type: "text" as const, text: `Error getting soul info: Unexpected error` },
-              ],
-              details: {},
-              isError: true,
-            }),
+          Effect.catchAllCause((cause) =>
+            Effect.sync(() =>
+              console.debug(`[tools] Error in soul_info: ${Cause.pretty(cause)}`),
+            ).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  content: [
+                    { type: "text" as const, text: `Error getting soul info: Unexpected error` },
+                  ],
+                  details: {},
+                  isError: true,
+                }),
+              ),
+            ),
           ),
         ),
         { signal },

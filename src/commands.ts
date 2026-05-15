@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AppRuntime } from "./types";
 import { SoulSpecLoader } from "./loader";
@@ -37,15 +37,22 @@ export function registerSoulsCommand(pi: ExtensionAPI, runtime: AppRuntime): voi
             } else {
               message += `• **${soul}** (Error: unable to load)\n\n`;
             }
+            message += "\n";
           }
 
           return { _tag: "souls" as const, message };
         }).pipe(
-          Effect.catchAllCause((_cause) =>
-            Effect.succeed({
-              _tag: "error" as const,
-              message: `Error listing souls: Unexpected error`,
-            }),
+          Effect.catchAllCause((cause) =>
+            Effect.sync(() =>
+              console.debug(`[commands] Error in /souls: ${Cause.pretty(cause)}`),
+            ).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  _tag: "error" as const,
+                  message: `Error listing souls: Unexpected error`,
+                }),
+              ),
+            ),
           ),
         ),
       );
@@ -154,11 +161,17 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
             yield* persistence.clear();
             return { _tag: "success" as const };
           }).pipe(
-            Effect.catchAllCause((_cause) =>
-              Effect.succeed({
-                _tag: "error" as const,
-                message: `Error deactivating soul: Unexpected error`,
-              }),
+            Effect.catchAllCause((cause) =>
+              Effect.sync(() =>
+                console.debug(`[commands] Error deactivating soul: ${Cause.pretty(cause)}`),
+              ).pipe(
+                Effect.andThen(
+                  Effect.succeed({
+                    _tag: "error" as const,
+                    message: `Error deactivating soul: Unexpected error`,
+                  }),
+                ),
+              ),
             ),
           ),
         );
@@ -177,7 +190,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           Effect.gen(function* () {
             const loader = yield* SoulSpecLoader;
             return yield* loader.getAllSouls();
-          }),
+          }).pipe(Effect.catchAllCause(() => Effect.succeed([]))),
         );
         let msg = "Usage: /soul <soul-name>\n\nAvailable souls:\n";
         for (const s of souls) {
@@ -223,11 +236,17 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
                 };
               }),
             ),
-            Effect.catchAllCause((_cause) =>
-              Effect.succeed({
-                _tag: "error" as const,
-                message: `Error activating soul: Unexpected error`,
-              }),
+            Effect.catchAllCause((cause) =>
+              Effect.sync(() =>
+                console.debug(`[commands] Error activating soul: ${Cause.pretty(cause)}`),
+              ).pipe(
+                Effect.andThen(
+                  Effect.succeed({
+                    _tag: "error" as const,
+                    message: `Error activating soul: Unexpected error`,
+                  }),
+                ),
+              ),
             ),
           ),
         );
