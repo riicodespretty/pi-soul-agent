@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Cause, Effect, Option } from "effect";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AppRuntime } from "./types";
 import { SoulSpecLoader } from "./loader";
@@ -20,48 +20,42 @@ export function registerSessionStartHandler(pi: ExtensionAPI, runtime: AppRuntim
     // Only preload on fresh sessions (matching reference behavior)
     if (event.reason !== "startup" && event.reason !== "new") return;
 
-    try {
-      const activeSoul = await runtime.runPromise(
-        Effect.gen(function* () {
-          const persistence = yield* ActiveSoulPersistence;
-          return yield* persistence.load();
-        }),
-      );
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const persistence = yield* ActiveSoulPersistence;
+        const activeSoul = yield* persistence.load();
 
-      if (Option.isSome(activeSoul)) {
-        const soul = activeSoul.value;
-        const soulName = soul.soul;
-        const level = soul.level;
+        if (Option.isSome(activeSoul)) {
+          const soul = activeSoul.value;
+          const soulName = soul.soul;
+          const level = soul.level;
 
-        // Preload the persisted active soul
-        await runtime.runPromise(
-          Effect.gen(function* () {
-            const loader = yield* SoulSpecLoader;
-            yield* loader.load(soulName, level);
-          }),
-        );
+          // Preload the persisted active soul
+          const loader = yield* SoulSpecLoader;
+          yield* loader.load(soulName, level);
 
-        if (ctx.hasUI) {
-          ctx.ui.notify(`Soul auto-loaded: ${soulName}`, "info");
+          if (ctx.hasUI) {
+            ctx.ui.notify(`Soul auto-loaded: ${soulName}`, "info");
+          }
+        } else {
+          // No active soul — check if any souls are available
+          const loader = yield* SoulSpecLoader;
+          const souls = yield* loader.getAllSouls();
+          if (souls.length > 0 && event.reason === "startup" && ctx.hasUI) {
+            ctx.ui.notify(
+              `🪷 Souls available (${souls.length}). Use /soul <name> to activate one.`,
+              "info",
+            );
+          }
         }
-      } else {
-        // No active soul — check if any souls are available
-        const souls = await runtime.runPromise(
-          Effect.gen(function* () {
-            const loader = yield* SoulSpecLoader;
-            return yield* loader.getAllSouls();
-          }),
-        );
-        if (souls.length > 0 && event.reason === "startup" && ctx.hasUI) {
-          ctx.ui.notify(
-            `🪷 Souls available (${souls.length}). Use /soul <name> to activate one.`,
-            "info",
-          );
-        }
-      }
-    } catch (error) {
-      console.debug(`[events] Error in session_start: ${String(error)}`);
-    }
+      }).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.sync(() =>
+            console.debug(`[events] Error in session_start: ${Cause.pretty(cause)}`),
+          ),
+        ),
+      ),
+    );
   });
 }
 
@@ -71,21 +65,16 @@ export function registerSessionStartHandler(pi: ExtensionAPI, runtime: AppRuntim
  */
 export function registerResourcesDiscoverHandler(pi: ExtensionAPI, _runtime: AppRuntime): void {
   pi.on("resources_discover", async (_event, _ctx) => {
-    try {
-      // Order matches reference: project-local first, then global
-      const result: ResourcesDiscoverResult = {
-        promptPaths: [
-          ".pi/souls",
-          "./souls",
-          expandHome("~/.pi/agent/souls"),
-          expandHome("~/.openclaw/souls/clawsouls"),
-        ],
-      };
-      return result;
-    } catch (error) {
-      console.debug(`[events] Error in resources_discover: ${String(error)}`);
-      return { promptPaths: [] };
-    }
+    // Order matches reference: project-local first, then global
+    const result: ResourcesDiscoverResult = {
+      promptPaths: [
+        ".pi/souls",
+        "./souls",
+        expandHome("~/.pi/agent/souls"),
+        expandHome("~/.openclaw/souls/clawsouls"),
+      ],
+    };
+    return result;
   });
 }
 
@@ -95,40 +84,34 @@ export function registerResourcesDiscoverHandler(pi: ExtensionAPI, _runtime: App
  */
 export function registerBeforeAgentStartHandler(pi: ExtensionAPI, runtime: AppRuntime): void {
   pi.on("before_agent_start", async (event, _ctx) => {
-    try {
-      const activeSoul = await runtime.runPromise(
-        Effect.gen(function* () {
-          const persistence = yield* ActiveSoulPersistence;
-          return yield* persistence.load();
-        }),
-      );
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const persistence = yield* ActiveSoulPersistence;
+        const activeSoul = yield* persistence.load();
 
-      if (!Option.isSome(activeSoul)) return;
+        if (!Option.isSome(activeSoul)) return;
 
-      const soul = activeSoul.value;
-      const soulName = soul.soul;
-      const level = soul.level;
+        const soul = activeSoul.value;
+        const soulName = soul.soul;
+        const level = soul.level;
+        const loader = yield* SoulSpecLoader;
+        const manifest = yield* loader.load(soulName, level);
+        const systemPrompt = buildSystemPrompt(manifest, level);
 
-      const manifest = await runtime.runPromise(
-        Effect.gen(function* () {
-          const loader = yield* SoulSpecLoader;
-          return yield* loader.load(soulName, level);
-        }),
-      );
+        // Append soul prompt to base system prompt (matching reference behavior)
+        const enhancedPrompt = event.systemPrompt
+          ? `${event.systemPrompt}\n\n---\n${systemPrompt}`
+          : systemPrompt;
 
-      const systemPrompt = buildSystemPrompt(manifest, level);
-
-      // Append soul prompt to base system prompt (matching reference behavior)
-      const enhancedPrompt = event.systemPrompt
-        ? `${event.systemPrompt}\n\n---\n${systemPrompt}`
-        : systemPrompt;
-
-      return {
-        systemPrompt: enhancedPrompt,
-      };
-    } catch (error) {
-      console.debug(`[events] Error in before_agent_start: ${String(error)}`);
-      return;
-    }
+        return { systemPrompt: enhancedPrompt };
+      }).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.sync(() =>
+            console.debug(`[events] Error in before_agent_start: ${Cause.pretty(cause)}`),
+          ),
+        ),
+      ),
+    );
+    return result;
   });
 }
