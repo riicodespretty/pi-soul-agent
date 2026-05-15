@@ -10,17 +10,11 @@ describe("SoulSpecLoader", () => {
   it.effect("getSoul auto-loads when soul not in cache", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const soul = yield* loader
-        .getSoul("bodhisattva-coder", 1)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      expect(soul).not.toBeNull();
-      expect(soul!.name).toBeDefined();
+      const soul = yield* loader.getSoul("bodhisattva-coder", 1);
+      expect(soul.name).toBeDefined();
       // Cache state: second call should hit cache, not re-read from disk
-      const cached = yield* loader
-        .getSoul("bodhisattva-coder", 1)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      expect(cached).not.toBeNull();
-      expect(cached!.name).toBeDefined();
+      const cached = yield* loader.getSoul("bodhisattva-coder", 1);
+      expect(cached.name).toBeDefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -32,17 +26,10 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul does not downgrade cache level", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      yield* loader
-        .loadSoul("bodhisattva-coder", 3)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      yield* loader
-        .loadSoul("bodhisattva-coder", 1)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      const after = yield* loader
-        .getSoul("bodhisattva-coder", 3)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      expect(after).not.toBeNull();
-      expect(after!.soul_content).toBeDefined();
+      yield* loader.loadSoul("bodhisattva-coder", 3);
+      yield* loader.loadSoul("bodhisattva-coder", 1);
+      const after = yield* loader.getSoul("bodhisattva-coder", 3);
+      expect(after.soul_content).toBeDefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -68,12 +55,9 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul at level 1 returns metadata-only manifest", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const soul = yield* loader
-        .loadSoul("bodhisattva-coder", 1)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      expect(soul).not.toBeNull();
-      expect(soul!.soul_content).toBeUndefined();
-      expect(soul!.identity_content).toBeUndefined();
+      const soul = yield* loader.loadSoul("bodhisattva-coder", 1);
+      expect(soul.soul_content).toBeUndefined();
+      expect(soul.identity_content).toBeUndefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -85,10 +69,7 @@ describe("SoulSpecLoader", () => {
   it.effect("loadAllSouls returns array of soul manifests", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const result = yield* loader
-        .loadAllSouls(1)
-        .pipe(Effect.catchAll(() => Effect.succeed([] as SoulManifest[])));
-      expect(Array.isArray(result)).toBe(true);
+      const result = yield* loader.loadAllSouls(1);
       expect(result.length).toBeGreaterThan(0);
       expect(result[0].name).toBeDefined();
       expect(result[0].soul_content).toBeUndefined();
@@ -150,14 +131,9 @@ describe("SoulSpecLoader", () => {
   it.effect("getSoul finds cached entry via normalized key", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      yield* loader
-        .loadSoul("bodhisattva-coder", 1)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      const soul = yield* loader
-        .getSoul("bodhisattva-coder", 1)
-        .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      expect(soul).not.toBeNull();
-      expect(soul!.name).toBeDefined();
+      yield* loader.loadSoul("bodhisattva-coder", 1);
+      const soul = yield* loader.getSoul("bodhisattva-coder", 1);
+      expect(soul.name).toBeDefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
