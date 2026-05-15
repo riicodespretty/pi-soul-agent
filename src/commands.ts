@@ -2,10 +2,8 @@ import { Cause, Effect } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AppRuntime } from "@/src/types";
 import { SoulSpecLoader } from "@/src/loader";
-import { suggestSouls } from "@/src/tools";
 import { ActiveSoulPersistence } from "@/src/persistence";
 import { buildSystemPrompt } from "@/src/system-prompt";
-import { NoSoulsFoundError } from "./errors";
 
 /**
  * Register the `/souls` command.
@@ -15,57 +13,35 @@ export function registerSoulsCommand(pi: ExtensionAPI, runtime: AppRuntime): voi
   pi.registerCommand("souls", {
     description: "List all available SoulSpec personas",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      const result = await runtime.runPromise(
+      ctx.ui.notify("Loading souls...", "info");
+
+      const entries = await runtime.runPromise(
         Effect.gen(function* () {
           const loader = yield* SoulSpecLoader;
-          const souls = yield* loader.getAllSouls();
-
-          if (souls.length === 0) {
-            return yield* Effect.fail(new NoSoulsFoundError());
-          }
-
-          let message = "Available souls:\n\n";
-          for (const soul of souls) {
-            const manifest = yield* loader
-              .load(soul, 1)
-              .pipe(Effect.catchAllCause(() => Effect.succeed(null)));
-            if (manifest) {
-              message += `• **${manifest.display_name}** (${soul})\n`;
-              message += `  ${manifest.description}\n`;
-              if (manifest.disclosure?.summary) {
-                message += `  ${manifest.disclosure.summary}\n`;
-              }
-            } else {
-              message += `• **${soul}** (Error: unable to load)\n\n`;
-            }
-            message += "\n";
-          }
-
-          return { _tag: "souls" as const, message };
-        }).pipe(
-          Effect.catchTags({
-            NoSoulsFoundError: (_NoSoulsFoundError) => {
-              ctx.ui.notify(
-                "No souls found. Create a souls/ directory with soul.json files.",
-                "error",
-              );
-              return Effect.succeed(_NoSoulsFoundError.message);
-            },
-          }),
-        ),
+          return yield* loader.enumerateSouls();
+        }),
       );
 
-      switch (result._tag) {
-        case "empty":
-          ctx.ui.notify("No souls found. Create a souls/ directory with soul.json files.", "info");
-          break;
-        case "souls":
-          ctx.ui.notify(result.message, "info");
-          break;
-        case "error":
-          ctx.ui.notify(result.message, "error");
-          break;
+      if (entries.length === 0) {
+        ctx.ui.notify("No souls found. Create a souls/ directory with soul.json files.", "error");
+        return;
       }
+
+      let message = "Available souls:\n\n";
+      for (const entry of entries) {
+        if (entry._tag === "loaded") {
+          message += `\u2022 **${entry.manifest.display_name}** (${entry.name})\n`;
+          message += `  ${entry.manifest.description}\n`;
+          if (entry.manifest.disclosure?.summary) {
+            message += `  ${entry.manifest.disclosure.summary}\n`;
+          }
+        } else {
+          message += `\u2022 **${entry.name}** (Error: ${entry.reason})\n`;
+        }
+        message += "\n";
+      }
+
+      ctx.ui.notify(message, "info");
     },
   });
 }
@@ -121,7 +97,12 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       return await runtime.runPromise(
         Effect.gen(function* () {
           const loader = yield* SoulSpecLoader;
-          const souls = yield* loader.getAllSouls();
+          const souls = yield* loader.getAllSouls().pipe(
+            Effect.catchAll((e) => {
+              console.debug(`[commands] Error in soul completions: ${e.message}`);
+              return Effect.succeed([] as string[]);
+            }),
+          );
           return souls
             .filter((s: string) => s.startsWith(prefix))
             .map((s: string) => ({
@@ -129,7 +110,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
               label: s,
               description: `Load soul: ${s}`,
             }));
-        }).pipe(Effect.catchAllCause(() => Effect.succeed(null))),
+        }),
       );
     },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -159,17 +140,11 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
             yield* persistence.clear();
             return { _tag: "success" as const };
           }).pipe(
-            Effect.catchAllCause((cause) =>
-              Effect.sync(() =>
-                console.debug(`[commands] Error deactivating soul: ${Cause.pretty(cause)}`),
-              ).pipe(
-                Effect.andThen(
-                  Effect.succeed({
-                    _tag: "error" as const,
-                    message: `Error deactivating soul: Unexpected error`,
-                  }),
-                ),
-              ),
+            Effect.catchAllCause(() =>
+              Effect.succeed({
+                _tag: "error" as const,
+                message: `Error deactivating soul: Unexpected error`,
+              }),
             ),
           ),
         );
@@ -187,12 +162,17 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         const souls = await runtime.runPromise(
           Effect.gen(function* () {
             const loader = yield* SoulSpecLoader;
-            return yield* loader.getAllSouls();
-          }).pipe(Effect.catchAllCause(() => Effect.succeed([]))),
+            return yield* loader.getAllSouls().pipe(
+              Effect.catchAll((e) => {
+                console.debug(`[commands] Error getting souls: ${e.message}`);
+                return Effect.succeed([] as string[]);
+              }),
+            );
+          }),
         );
         let msg = "Usage: /soul <soul-name>\n\nAvailable souls:\n";
         for (const s of souls) {
-          msg += `\n  • **${s}**`;
+          msg += `\n  \u2022 **${s}**`;
         }
         msg += "\n\nUse /soul off to clear the active soul.";
         ctx.ui.notify(msg, "error");
@@ -209,43 +189,21 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
             yield* persistence.save(manifest.name, parsed.level);
             return { _tag: "success" as const, manifest, systemPrompt };
           }).pipe(
-            Effect.catchTag("SoulNotFoundError", (_error) =>
-              Effect.gen(function* () {
-                const suggestions = yield* Effect.promise(() =>
-                  suggestSouls(runtime, parsed.soulName!),
-                );
-                if (suggestions) {
-                  if (suggestions.matches.length > 0) {
-                    return {
-                      _tag: "suggest" as const,
-                      message: `No exact match found for "${parsed.soulName}". Did you mean one of these?\n\n${suggestions.matches.slice(0, 5).join(", ")}\n\nTry one of these exact names, or use a more specific pattern.`,
-                    };
-                  }
-                  if (suggestions.all.length > 0) {
-                    return {
-                      _tag: "suggest" as const,
-                      message: `No soul found matching "${parsed.soulName}".\n\nAvailable souls:\n\n${suggestions.all.slice(0, 10).join(", ")}\n\nUse /souls to see all available souls.`,
-                    };
-                  }
-                }
-                return {
-                  _tag: "suggest" as const,
-                  message: `No soul found matching "${parsed.soulName}".`,
-                };
-              }),
-            ),
-            Effect.catchAllCause((cause) =>
-              Effect.sync(() =>
-                console.debug(`[commands] Error activating soul: ${Cause.pretty(cause)}`),
-              ).pipe(
-                Effect.andThen(
-                  Effect.succeed({
-                    _tag: "error" as const,
-                    message: `Error activating soul: Unexpected error`,
-                  }),
-                ),
-              ),
-            ),
+            Effect.catchTag("SoulLoadError", (e) => {
+              // SoulLoadError.message already contains suggestions for not-found cases
+              console.debug(`[commands] Error loading soul: ${e.message}`);
+              return Effect.succeed({
+                _tag: "error" as const,
+                message: e.message,
+              });
+            }),
+            Effect.catchAllCause((cause) => {
+              console.error(`[commands] Defect activating soul: ${Cause.pretty(cause)}`);
+              return Effect.succeed({
+                _tag: "error" as const,
+                message: "Error activating soul: Unexpected error",
+              });
+            }),
           ),
         );
 
@@ -270,9 +228,6 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
                 deliverAs: "steer",
               },
             );
-            break;
-          case "suggest":
-            ctx.ui.notify(result.message, "warning");
             break;
           case "error":
             ctx.ui.notify(result.message, "error");

@@ -215,7 +215,8 @@ export function readJsonFile<T>(
     Effect.flatMap((content: string) =>
       Effect.try({
         try: () => JSON.parse(content) as T,
-        catch: (cause) => new ManifestParseError({ path: soulPath, cause }),
+        catch: (cause) =>
+          new ManifestParseError({ message: `Failed to parse ${soulPath}`, path: soulPath, cause }),
       }),
     ),
   );
@@ -224,7 +225,7 @@ export function readJsonFile<T>(
       if (cause instanceof ManifestParseError) {
         return cause as ManifestParseError;
       }
-      return new FileSystemError({ path: soulPath, cause });
+      return new FileSystemError({ message: `Failed to read ${soulPath}`, path: soulPath, cause });
     }),
   );
 }
@@ -238,5 +239,10 @@ export function readTextFile(
 ): Effect.Effect<string, FileSystemError> {
   return fs
     .readFileString(soulPath)
-    .pipe(Effect.mapError((cause) => new FileSystemError({ path: soulPath, cause })));
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new FileSystemError({ message: `Failed to read ${soulPath}`, path: soulPath, cause }),
+      ),
+    );
 }

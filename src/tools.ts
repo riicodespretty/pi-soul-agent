@@ -6,23 +6,6 @@ import { SoulSpecLoader } from "@/src/loader";
 import { buildSystemPrompt } from "@/src/system-prompt";
 
 /**
- * Shared helper: query suggestion data when a soul is not found.
- */
-export async function suggestSouls(
-  runtime: AppRuntime,
-  soulName: string,
-): Promise<{ matches: string[]; all: string[] } | null> {
-  return await runtime.runPromise(
-    Effect.gen(function* () {
-      const loader = yield* SoulSpecLoader;
-      const matches = yield* loader.findMatchingSouls(new RegExp(soulName, "i"));
-      const all = yield* loader.getAllSouls();
-      return { matches, all };
-    }).pipe(Effect.catchAllCause(() => Effect.succeed(null))),
-  );
-}
-
-/**
  * Register the `load_soul` tool.
  * Loads a SoulSpec persona and builds its system prompt.
  */
@@ -63,88 +46,27 @@ export function registerLoadSoulTool(pi: ExtensionAPI, runtime: AppRuntime): voi
             },
           };
         }).pipe(
-          Effect.catchTag("SoulNotFoundError", (_error) =>
-            Effect.gen(function* () {
-              const suggestions = yield* Effect.promise(() =>
-                suggestSouls(runtime, params.soul_name),
-              );
-              if (suggestions) {
-                if (suggestions.matches.length > 0) {
-                  const matchList = suggestions.matches.slice(0, 5).join(", ");
-                  const hint =
-                    suggestions.matches.length > 5
-                      ? ` (showing first 5 of ${suggestions.matches.length})`
-                      : "";
-                  return {
-                    content: [
-                      {
-                        type: "text" as const,
-                        text: `No exact match found for "${params.soul_name}". Did you mean one of these?\n\n${matchList}${hint}\n\nTry one of these exact names, or use a more specific pattern.`,
-                      },
-                    ],
-                    details: {},
-                    isError: true,
-                  };
-                }
-                if (suggestions.all.length > 0) {
-                  const soulList = suggestions.all.slice(0, 10).join(", ");
-                  return {
-                    content: [
-                      {
-                        type: "text" as const,
-                        text: `No soul found matching "${params.soul_name}".\n\nAvailable souls:\n\n${soulList}\n\nUse /souls to see all available souls, or try a partial match like 'dev' or 'assist'.`,
-                      },
-                    ],
-                    details: {},
-                    isError: true,
-                  };
-                }
-              }
-              return {
-                content: [
-                  { type: "text" as const, text: `No soul found matching "${params.soul_name}".` },
-                ],
-                details: {},
-                isError: true,
-              };
-            }),
-          ),
-          Effect.catchTag("ManifestParseError", (error) =>
-            Effect.succeed({
-              content: [
-                {
-                  type: "text" as const,
-                  text: `Error parsing soul manifest: ${String(error.cause)}`,
-                },
-              ],
+          // SoulLoadError.message already contains user-friendly text with suggestions
+          Effect.catchTag("SoulLoadError", (e) => {
+            console.debug(`[tools] Error in load_soul: ${e.message}`);
+            return Effect.succeed({
+              content: [{ type: "text" as const, text: e.message }],
               details: {},
               isError: true,
-            }),
-          ),
-          Effect.catchTag("FileSystemError", (error) =>
-            Effect.succeed({
-              content: [
-                { type: "text" as const, text: `File system error: ${String(error.cause)}` },
-              ],
+            });
+          }),
+          Effect.catchAllCause((cause) => {
+            if (Cause.isDieType(cause)) {
+              console.error(`[tools] Defect in load_soul: ${Cause.pretty(cause)}`);
+            } else {
+              console.debug(`[tools] Error in load_soul: ${Cause.pretty(cause)}`);
+            }
+            return Effect.succeed({
+              content: [{ type: "text" as const, text: "Error loading soul: Unexpected error" }],
               details: {},
               isError: true,
-            }),
-          ),
-          Effect.catchAllCause((cause) =>
-            Effect.sync(() =>
-              console.debug(`[tools] Error in load_soul: ${Cause.pretty(cause)}`),
-            ).pipe(
-              Effect.andThen(
-                Effect.succeed({
-                  content: [
-                    { type: "text" as const, text: `Error loading soul: Unexpected error` },
-                  ],
-                  details: {},
-                  isError: true,
-                }),
-              ),
-            ),
-          ),
+            });
+          }),
         ),
         { signal },
       );
@@ -166,9 +88,9 @@ export function registerListSoulsTool(pi: ExtensionAPI, runtime: AppRuntime): vo
       return await runtime.runPromise(
         Effect.gen(function* () {
           const loader = yield* SoulSpecLoader;
-          const souls = yield* loader.getAllSouls();
+          const entries = yield* loader.enumerateSouls();
 
-          if (souls.length === 0) {
+          if (entries.length === 0) {
             return {
               content: [
                 {
@@ -181,43 +103,24 @@ export function registerListSoulsTool(pi: ExtensionAPI, runtime: AppRuntime): vo
           }
 
           let response = "Available souls:\n\n";
-          for (const soulName of souls) {
-            const manifest = yield* loader
-              .load(soulName, 1)
-              .pipe(Effect.catchAllCause(() => Effect.succeed(null)));
-            if (manifest) {
-              response += `- **${manifest.display_name}** (${soulName})\n`;
-              response += `  ${manifest.description}\n`;
-              if (manifest.disclosure?.summary) {
-                response += `  ${manifest.disclosure.summary}\n`;
+          for (const entry of entries) {
+            if (entry._tag === "loaded") {
+              response += `- **${entry.manifest.display_name}** (${entry.name})\n`;
+              response += `  ${entry.manifest.description}\n`;
+              if (entry.manifest.disclosure?.summary) {
+                response += `  ${entry.manifest.disclosure.summary}\n`;
               }
             } else {
-              response += `- **${soulName}** (Error loading info)\n`;
+              response += `- **${entry.name}** (Error: ${entry.reason})\n`;
             }
             response += "\n";
           }
 
           return {
             content: [{ type: "text" as const, text: response }],
-            details: { souls },
+            details: { souls: entries.map((e) => e.name) },
           };
-        }).pipe(
-          Effect.catchAllCause((cause) =>
-            Effect.sync(() =>
-              console.debug(`[tools] Error in list_souls: ${Cause.pretty(cause)}`),
-            ).pipe(
-              Effect.andThen(
-                Effect.succeed({
-                  content: [
-                    { type: "text" as const, text: `Error listing souls: Unexpected error` },
-                  ],
-                  details: {},
-                  isError: true,
-                }),
-              ),
-            ),
-          ),
-        ),
+        }),
         { signal },
       );
     },
@@ -282,72 +185,29 @@ export function registerSoulInfoTool(pi: ExtensionAPI, runtime: AppRuntime): voi
             details: { soul },
           };
         }).pipe(
-          Effect.catchTag("SoulNotFoundError", (error) =>
-            Effect.gen(function* () {
-              const suggestions = yield* Effect.promise(() =>
-                suggestSouls(runtime, params.soul_name),
-              );
-              if (suggestions && suggestions.matches.length > 0) {
-                const matchList = suggestions.matches.slice(0, 5).join(", ");
-                return {
-                  content: [
-                    {
-                      type: "text" as const,
-                      text: `No exact match found for "${params.soul_name}". Did you mean one of these?\n\n${matchList}\n\nTry one of these exact names, or use a more specific pattern.`,
-                    },
-                  ],
-                  details: {},
-                  isError: true,
-                };
-              }
-              return {
-                content: [
-                  {
-                    type: "text" as const,
-                    text: `Error getting soul info: Soul not found: ${error.soulPath}`,
-                  },
-                ],
-                details: {},
-                isError: true,
-              };
-            }),
-          ),
-          Effect.catchTag("ManifestParseError", (error) =>
-            Effect.succeed({
+          // SoulLoadError.message already contains user-friendly text with suggestions
+          Effect.catchTag("SoulLoadError", (e) => {
+            console.debug(`[tools] Error in soul_info: ${e.message}`);
+            return Effect.succeed({
+              content: [{ type: "text" as const, text: e.message }],
+              details: {},
+              isError: true,
+            });
+          }),
+          Effect.catchAllCause((cause) => {
+            if (Cause.isDieType(cause)) {
+              console.error(`[tools] Defect in soul_info: ${Cause.pretty(cause)}`);
+            } else {
+              console.debug(`[tools] Error in soul_info: ${Cause.pretty(cause)}`);
+            }
+            return Effect.succeed({
               content: [
-                {
-                  type: "text" as const,
-                  text: `Error parsing soul manifest: ${String(error.cause)}`,
-                },
+                { type: "text" as const, text: "Error getting soul info: Unexpected error" },
               ],
               details: {},
               isError: true,
-            }),
-          ),
-          Effect.catchTag("FileSystemError", (error) =>
-            Effect.succeed({
-              content: [
-                { type: "text" as const, text: `File system error: ${String(error.cause)}` },
-              ],
-              details: {},
-              isError: true,
-            }),
-          ),
-          Effect.catchAllCause((cause) =>
-            Effect.sync(() =>
-              console.debug(`[tools] Error in soul_info: ${Cause.pretty(cause)}`),
-            ).pipe(
-              Effect.andThen(
-                Effect.succeed({
-                  content: [
-                    { type: "text" as const, text: `Error getting soul info: Unexpected error` },
-                  ],
-                  details: {},
-                  isError: true,
-                }),
-              ),
-            ),
-          ),
+            });
+          }),
         ),
         { signal },
       );

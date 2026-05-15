@@ -18,7 +18,10 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
        * Save the active soul to disk.
        * Creates the parent directory if it doesn't exist.
        */
-      const save = (soulName: string, level: number): Effect.Effect<void, FileSystemError, Path.Path> => {
+      const save = (
+        soulName: string,
+        level: number,
+      ): Effect.Effect<void, FileSystemError, Path.Path> => {
         return Effect.gen(function* () {
           const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
           const dirPath = filePath.substring(0, filePath.lastIndexOf("/"));
@@ -36,7 +39,13 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           yield* fs.writeFileString(filePath, JSON.stringify(data, null, 2));
         }).pipe(
           Effect.catchAll((cause) =>
-            Effect.fail(new FileSystemError({ path: ACTIVE_SOUL_PATH, cause })),
+            Effect.fail(
+              new FileSystemError({
+                message: `Failed to save active soul`,
+                path: ACTIVE_SOUL_PATH,
+                cause,
+              }),
+            ),
           ),
         );
       };
@@ -78,7 +87,13 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           );
         }).pipe(
           Effect.catchAll((cause) =>
-            Effect.fail(new FileSystemError({ path: ACTIVE_SOUL_PATH, cause })),
+            Effect.fail(
+              new FileSystemError({
+                message: `Failed to clear active soul`,
+                path: ACTIVE_SOUL_PATH,
+                cause,
+              }),
+            ),
           ),
         );
       };

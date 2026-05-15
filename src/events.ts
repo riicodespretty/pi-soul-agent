@@ -32,27 +32,41 @@ export function registerSessionStartHandler(pi: ExtensionAPI, runtime: AppRuntim
 
           // Preload the persisted active soul
           const loader = yield* SoulSpecLoader;
-          yield* loader.load(soulName, level);
+          const result = yield* loader.load(soulName, level).pipe(
+            Effect.catchTag("SoulLoadError", (e) => {
+              console.debug(`[events] Failed to preload soul "${soulName}": ${e.message}`);
+              return Effect.succeed(null);
+            }),
+          );
 
-          if (ctx.hasUI) {
+          if (result && ctx.hasUI) {
             ctx.ui.notify(`Soul auto-loaded: ${soulName}`, "info");
           }
         } else {
           // No active soul — check if any souls are available
           const loader = yield* SoulSpecLoader;
-          const souls = yield* loader.getAllSouls();
+          const souls = yield* loader.getAllSouls().pipe(
+            Effect.catchTag("SoulLoadError", (e) => {
+              console.debug(`[events] Failed to list souls: ${e.message}`);
+              return Effect.succeed([] as string[]);
+            }),
+          );
           if (souls.length > 0 && event.reason === "startup" && ctx.hasUI) {
             ctx.ui.notify(
-              `🪷 Souls available (${souls.length}). Use /soul <name> to activate one.`,
+              `Souls available (${souls.length}). Use /soul <name> to activate one.`,
               "info",
             );
           }
         }
       }).pipe(
         Effect.catchAllCause((cause) =>
-          Effect.sync(() =>
-            console.debug(`[events] Error in session_start: ${Cause.pretty(cause)}`),
-          ),
+          Effect.sync(() => {
+            if (Cause.isDieType(cause)) {
+              console.error(`[events] Defect in session_start: ${Cause.pretty(cause)}`);
+            } else {
+              console.debug(`[events] Error in session_start: ${Cause.pretty(cause)}`);
+            }
+          }),
         ),
       ),
     );
@@ -71,12 +85,7 @@ export function registerResourcesDiscoverHandler(pi: ExtensionAPI, runtime: AppR
       runtime.runPromise(expandHome("~/.openclaw/souls/clawsouls")),
     ]);
     const result: ResourcesDiscoverResult = {
-      promptPaths: [
-        ".pi/souls",
-        "./souls",
-        piSouls,
-        clawSouls,
-      ],
+      promptPaths: [".pi/souls", "./souls", piSouls, clawSouls],
     };
     return result;
   });
@@ -99,7 +108,15 @@ export function registerBeforeAgentStartHandler(pi: ExtensionAPI, runtime: AppRu
         const soulName = soul.soul;
         const level = soul.level;
         const loader = yield* SoulSpecLoader;
-        const manifest = yield* loader.load(soulName, level);
+        const manifest = yield* loader.load(soulName, level).pipe(
+          Effect.catchTag("SoulLoadError", (e) => {
+            console.debug(`[events] Failed to load active soul "${soulName}": ${e.message}`);
+            return Effect.succeed(null);
+          }),
+        );
+
+        if (!manifest) return;
+
         const systemPrompt = buildSystemPrompt(manifest, level);
 
         // Append soul prompt to base system prompt (matching reference behavior)
@@ -110,9 +127,13 @@ export function registerBeforeAgentStartHandler(pi: ExtensionAPI, runtime: AppRu
         return { systemPrompt: enhancedPrompt };
       }).pipe(
         Effect.catchAllCause((cause) =>
-          Effect.sync(() =>
-            console.debug(`[events] Error in before_agent_start: ${Cause.pretty(cause)}`),
-          ),
+          Effect.sync(() => {
+            if (Cause.isDieType(cause)) {
+              console.error(`[events] Defect in before_agent_start: ${Cause.pretty(cause)}`);
+            } else {
+              console.debug(`[events] Error in before_agent_start: ${Cause.pretty(cause)}`);
+            }
+          }),
         ),
       ),
     );
