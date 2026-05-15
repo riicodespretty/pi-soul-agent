@@ -13,6 +13,10 @@
     "moduleDetection": "force",
     "noEmit": true,
 
+    "paths": {
+      "@/*": ["./*"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
