@@ -34,28 +34,24 @@ function getErrorMessage(error: unknown): string {
  * Level 3: all content fields
  */
 export function filterByLevel(manifest: SoulManifest, level: number): SoulManifest {
-  if (level >= 3) return manifest;
+  if (level >= 3) return { ...manifest };
 
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(manifest)) {
-    (result as any)[key] = (manifest as any)[key];
-  }
+  const result = { ...manifest };
 
-  if (level < 3) {
-    delete result.agents_content;
-    delete result.style_content;
-    delete result.heartbeat_content;
-    delete result.user_template_content;
-    delete result.examples_good_content;
-    delete result.examples_bad_content;
-  }
+  // Level < 3: remove level-3-only content fields
+  delete result.agents_content;
+  delete result.style_content;
+  delete result.heartbeat_content;
+  delete result.user_template_content;
+  delete result.examples_good_content;
+  delete result.examples_bad_content;
 
   if (level < 2) {
     delete result.soul_content;
     delete result.identity_content;
   }
 
-  return result as unknown as SoulManifest;
+  return result;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -93,7 +89,8 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         }
 
         const allSouls = yield* getAllSoulsInternal();
-        const pattern = new RegExp(soulName, "i");
+        const escaped = soulName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(escaped, "i");
         const matches = allSouls.filter((s: string) => pattern.test(s));
 
         if (matches.length === 0) {
@@ -211,7 +208,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         // Cache: upgrade-only (never downgrade)
         yield* Ref.update(cache, (m) => {
           const existing = m.get(cacheKey);
-          if (existing && existing.cachedLevel >= level) return m;
+          if (existing && existing.cachedLevel > level) return m;
           return new Map(m).set(cacheKey, { manifest, cachedLevel: level });
         });
 
@@ -220,6 +217,8 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         Effect.catchTags({
           SoulNotFoundError: (_e) =>
             Effect.fail(new SoulLoadError({ message: `Soul "${soulName}" not found.`, soulName })),
+          NoSoulsFoundError: (_e) =>
+            Effect.fail(new SoulLoadError({ message: `No souls found in any search path.` })),
           ManifestParseError: (e) =>
             Effect.fail(
               new SoulLoadError({
@@ -278,7 +277,9 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
             seen.add(entry);
 
             const soulJsonPath = `${resolvedBase}/${entry}/soul.json`;
-            const hasSoul = yield* fs.exists(soulJsonPath);
+            const hasSoul = yield* fs
+              .exists(soulJsonPath)
+              .pipe(Effect.catchAll(() => Effect.succeed(false)));
             if (!hasSoul) continue;
 
             const result = yield* loadSoul(entry, level).pipe(

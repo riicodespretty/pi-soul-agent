@@ -11,9 +11,16 @@ describe("SoulSpecLoader", () => {
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader
-        .getSoul("test-soul", 1)
+        .getSoul("bodhisattva-coder", 1)
         .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      expect(soul === null || typeof soul === "object").toBe(true);
+      expect(soul).not.toBeNull();
+      expect(soul!.name).toBeDefined();
+      // Cache state: second call should hit cache, not re-read from disk
+      const cached = yield* loader
+        .getSoul("bodhisattva-coder", 1)
+        .pipe(Effect.catchAll(() => Effect.succeed(null)));
+      expect(cached).not.toBeNull();
+      expect(cached!.name).toBeDefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -34,9 +41,8 @@ describe("SoulSpecLoader", () => {
       const after = yield* loader
         .getSoul("bodhisattva-coder", 3)
         .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      if (after) {
-        expect(after.soul_content).toBeDefined();
-      }
+      expect(after).not.toBeNull();
+      expect(after!.soul_content).toBeDefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -63,12 +69,11 @@ describe("SoulSpecLoader", () => {
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader
-        .loadSoul("meta-only", 1)
+        .loadSoul("bodhisattva-coder", 1)
         .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      if (soul) {
-        expect(soul.soul_content).toBeUndefined();
-        expect(soul.identity_content).toBeUndefined();
-      }
+      expect(soul).not.toBeNull();
+      expect(soul!.soul_content).toBeUndefined();
+      expect(soul!.identity_content).toBeUndefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -84,10 +89,9 @@ describe("SoulSpecLoader", () => {
         .loadAllSouls(1)
         .pipe(Effect.catchAll(() => Effect.succeed([] as SoulManifest[])));
       expect(Array.isArray(result)).toBe(true);
-      if (result.length > 0) {
-        expect(result[0].name).toBeDefined();
-        expect(result[0].soul_content).toBeUndefined();
-      }
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0].name).toBeDefined();
+      expect(result[0].soul_content).toBeUndefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
@@ -152,9 +156,8 @@ describe("SoulSpecLoader", () => {
       const soul = yield* loader
         .getSoul("bodhisattva-coder", 1)
         .pipe(Effect.catchAll(() => Effect.succeed(null)));
-      if (soul) {
-        expect(soul.name).toBeDefined();
-      }
+      expect(soul).not.toBeNull();
+      expect(soul!.name).toBeDefined();
     }).pipe(
       Effect.provide(SoulSpecLoader.Default),
       Effect.provide(NodeFileSystemLayer),
