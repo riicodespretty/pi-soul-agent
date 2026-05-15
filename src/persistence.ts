@@ -1,8 +1,8 @@
 import { Effect, Option } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import type { ActiveSoul } from "./types";
-import { FileSystemError } from "./types";
-import { expandHome } from "./services/soul-fs";
+import type { ActiveSoul } from "@/src/types";
+import { FileSystemError } from "@/src/errors";
+import { expandHome } from "@/src/services/soul-fs";
 
 /** Persistence file path */
 const ACTIVE_SOUL_PATH = "~/.pi/agent/.active-soul.json";

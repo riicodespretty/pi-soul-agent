@@ -15,11 +15,10 @@ import {
   type SoulManifest,
   ContactPolicy,
   Environment,
-  FileSystemError,
   InteractionMode,
-  ManifestParseError,
   Mobility,
-} from "../types";
+} from "@/src/types";
+import { FileSystemError, ManifestParseError } from "@/src/errors";
 
 /**
  * Expand ~ to the user's home directory.
@@ -101,8 +100,7 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
         has_speaker: (hcData.hasSpeaker as boolean) || false,
         has_microphone: (hcData.hasMicrophone as boolean) || false,
         has_camera: (hcData.hasCamera as boolean) || false,
-        mobility:
-          Mobility[hcData.mobility as keyof typeof Mobility] || Mobility.STATIONARY,
+        mobility: Mobility[hcData.mobility as keyof typeof Mobility] || Mobility.STATIONARY,
         manipulator: (hcData.manipulator as boolean) || false,
       }
     : undefined;

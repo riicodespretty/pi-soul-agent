@@ -1,10 +1,10 @@
 import { Cause, Effect } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime } from "./types";
-import { SoulSpecLoader } from "./loader";
-import { suggestSouls } from "./tools";
-import { ActiveSoulPersistence } from "./persistence";
-import { buildSystemPrompt } from "./system-prompt";
+import type { AppRuntime } from "@/src/types";
+import { SoulSpecLoader } from "@/src/loader";
+import { suggestSouls } from "@/src/tools";
+import { ActiveSoulPersistence } from "@/src/persistence";
+import { buildSystemPrompt } from "@/src/system-prompt";
 
 /**
  * Register the `/souls` command.

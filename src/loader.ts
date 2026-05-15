@@ -1,8 +1,8 @@
 import { Effect, Ref } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import type { SoulManifest } from "./types";
-import { SoulNotFoundError } from "./types";
-import { expandHome, parseManifest, readJsonFile, readTextFile } from "./services/soul-fs";
+import type { SoulManifest } from "@/src/types";
+import { SoulNotFoundError } from "@/src/errors";
+import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
 
 /** Soul search paths (with tilde — expanded at runtime) */
 const SOUL_SEARCH_PATHS = [

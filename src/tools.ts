@@ -1,9 +1,9 @@
 import { Cause, Effect } from "effect";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime } from "./types";
-import { SoulSpecLoader } from "./loader";
-import { buildSystemPrompt } from "./system-prompt";
+import type { AppRuntime } from "@/src/types";
+import { SoulSpecLoader } from "@/src/loader";
+import { buildSystemPrompt } from "@/src/system-prompt";
 
 /**
  * Shared helper: query suggestion data when a soul is not found.

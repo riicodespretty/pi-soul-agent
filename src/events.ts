@@ -1,10 +1,10 @@
 import { Cause, Effect, Option } from "effect";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime } from "./types";
-import { SoulSpecLoader } from "./loader";
-import { ActiveSoulPersistence } from "./persistence";
-import { expandHome } from "./services/soul-fs";
-import { buildSystemPrompt } from "./system-prompt";
+import type { AppRuntime } from "@/src/types";
+import { SoulSpecLoader } from "@/src/loader";
+import { ActiveSoulPersistence } from "@/src/persistence";
+import { expandHome } from "@/src/services/soul-fs";
+import { buildSystemPrompt } from "@/src/system-prompt";
 
 /** Local type since ResourcesDiscoverResult is not re-exported from pi-coding-agent */
 interface ResourcesDiscoverResult {
