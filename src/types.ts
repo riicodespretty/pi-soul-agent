@@ -1,4 +1,4 @@
-import { Data, ManagedRuntime } from "effect";
+import { ManagedRuntime } from "effect";
 
 // ── Enums as const objects (erasableSyntaxOnly: true forbids `enum`) ──
 
@@ -157,25 +157,6 @@ export interface ActiveSoul {
   readonly level: number;
   readonly updatedAt: number;
 }
-
-// ── Error Types ──
-
-export class SoulNotFoundError extends Data.TaggedError("SoulNotFoundError")<{
-  readonly soulPath: string;
-}> {}
-
-export class ManifestParseError extends Data.TaggedError("ManifestParseError")<{
-  readonly path: string;
-  readonly cause: unknown;
-}> {}
-
-export class FileSystemError extends Data.TaggedError("FileSystemError")<{
-  readonly path: string;
-  readonly cause: unknown;
-}> {}
-
-/** Union of all errors that can occur during soul loading */
-export type SoulLoadError = SoulNotFoundError | ManifestParseError | FileSystemError;
 
 /** Application runtime type for the Pi extension bridge */
 export type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>;
