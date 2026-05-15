@@ -1,5 +1,6 @@
 import { Cause, Effect, Ref } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
+import { Path } from "@effect/platform";
 import type { SoulManifest } from "@/src/types";
 import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "@/src/errors";
 import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
@@ -14,10 +15,10 @@ const SOUL_SEARCH_PATHS = [
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/** An individual soul entry from enumerateSouls — best-effort loading */
-export type EnumeratedSoul =
-  | { readonly _tag: "loaded"; readonly name: string; readonly manifest: SoulManifest }
-  | { readonly _tag: "skipped"; readonly name: string; readonly reason: string };
+interface CacheEntry {
+  readonly manifest: SoulManifest;
+  readonly cachedLevel: number;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -26,17 +27,35 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
-function formatSoulOffers(soulName: string, offers: { matches: string[]; all: string[] }): string {
-  if (offers.matches.length > 0) {
-    const matchList = offers.matches.slice(0, 5).join(", ");
-    const hint = offers.matches.length > 5 ? ` (showing first 5 of ${offers.matches.length})` : "";
-    return `No exact match found for "${soulName}". Did you mean one of these?\n\n${matchList}${hint}\n\nTry one of these exact names, or use a more specific pattern.`;
+/**
+ * Filter a manifest to only include content fields up to the requested level.
+ * Level 1: metadata only (no content fields)
+ * Level 2: soul_content + identity_content
+ * Level 3: all content fields
+ */
+export function filterByLevel(manifest: SoulManifest, level: number): SoulManifest {
+  if (level >= 3) return manifest;
+
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(manifest)) {
+    (result as any)[key] = (manifest as any)[key];
   }
-  if (offers.all.length > 0) {
-    const soulList = offers.all.slice(0, 10).join(", ");
-    return `No soul found matching "${soulName}".\n\nAvailable souls:\n\n${soulList}\n\nUse /souls to see all available souls, or try a partial match like "dev" or "assist".`;
+
+  if (level < 3) {
+    delete result.agents_content;
+    delete result.style_content;
+    delete result.heartbeat_content;
+    delete result.user_template_content;
+    delete result.examples_good_content;
+    delete result.examples_bad_content;
   }
-  return `No soul found matching "${soulName}".`;
+
+  if (level < 2) {
+    delete result.soul_content;
+    delete result.identity_content;
+  }
+
+  return result as unknown as SoulManifest;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -44,26 +63,16 @@ function formatSoulOffers(soulName: string, offers: { matches: string[]; all: st
 export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSpecLoader", {
   effect: Effect.gen(function* () {
     const fs = yield* FileSystem;
-    const cache = yield* Ref.make<Map<string, SoulManifest>>(new Map());
+    const pathSvc = yield* Path.Path;
+    const cache = yield* Ref.make<Map<string, CacheEntry>>(new Map());
 
-    // ── Internal (error-throwing) methods ────────────────────────────────────────
-    // These use internal error classes and are wrapped by the public methods below.
+    // ── Internal helpers ─────────────────────────────────────────────────────────
 
-    const getSoulOffers = (soulName: string) => {
-      return Effect.gen(function* () {
-        const matches = yield* findMatchingSoulsInternal(new RegExp(soulName, "i")).pipe(
-          Effect.catchAllCause(() => Effect.succeed([] as string[])),
-        );
-        const souls = yield* getAllSoulsInternal().pipe(
-          Effect.catchAllCause(() => Effect.succeed([] as string[])),
-        );
-        return { matches, all: souls };
-      });
-    };
+    const expandHomeDir = expandHome;
 
     const resolveSoulPath = (soulName: string) => {
       return Effect.gen(function* () {
-        const expandedDirect = yield* expandHome(soulName);
+        const expandedDirect = yield* expandHomeDir(soulName);
         const directExists = yield* fs.exists(expandedDirect);
         if (directExists) {
           return expandedDirect;
@@ -75,7 +84,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         }
 
         for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = yield* expandHome(base);
+          const resolvedBase = yield* expandHomeDir(base);
           const exactPath = `${resolvedBase}/${soulName}/soul.json`;
           const exists = yield* fs.exists(exactPath);
           if (exists) {
@@ -103,7 +112,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         const souls: string[] = [];
 
         for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = yield* expandHome(base);
+          const resolvedBase = yield* expandHomeDir(base);
           const baseExists = yield* fs.exists(resolvedBase);
           if (!baseExists) continue;
 
@@ -128,24 +137,22 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       });
     };
 
-    const findMatchingSoulsInternal = (pattern: RegExp) => {
-      return Effect.gen(function* () {
-        const all = yield* getAllSoulsInternal();
-        return all.filter((s: string) => pattern.test(s));
-      });
-    };
+    // ── Public API ────────────────────────────────────────────────────────────────
 
-    const loadInternal = (soulPath: string, level: number) => {
+    /**
+     * Load a soul manifest from disk at the requested level.
+     * Always reads from disk — no cache lookup.
+     * Cache is updated with upgrade-only policy (never downgrades).
+     *
+     * Level 1: metadata only (soul.json)
+     * Level 2: include soul_content + identity_content
+     * Level 3: include all content (agents, style, heartbeat, user_template, examples)
+     */
+    const loadSoul = (soulName: string, level: number = 3) => {
       return Effect.gen(function* () {
-        const currentCache = yield* Ref.get(cache);
-        const cachedKey = `${soulPath}:${level}`;
-        const cached = currentCache.get(cachedKey);
-        if (cached) {
-          return cached;
-        }
-
-        const resolvedDir = yield* resolveSoulPath(soulPath);
-        const manifestPath = `${resolvedDir}/soul.json`;
+        const soulPath = yield* resolveSoulPath(soulName);
+        const cacheKey = pathSvc.basename(soulPath);
+        const manifestPath = `${soulPath}/soul.json`;
 
         const raw = yield* readJsonFile<Record<string, unknown>>(fs, manifestPath);
         const manifest = parseManifest(raw);
@@ -154,90 +161,65 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         if (level >= 2) {
           if (files.soul) {
-            manifest.soul_content = yield* readTextFile(fs, `${resolvedDir}/${files.soul}`);
+            manifest.soul_content = yield* readTextFile(fs, `${soulPath}/${files.soul}`);
           }
           if (files.identity) {
-            manifest.identity_content = yield* readTextFile(fs, `${resolvedDir}/${files.identity}`);
+            manifest.identity_content = yield* readTextFile(fs, `${soulPath}/${files.identity}`);
           }
         }
 
         if (level >= 3) {
           if (files.agents) {
-            manifest.agents_content = yield* readTextFile(fs, `${resolvedDir}/${files.agents}`);
+            manifest.agents_content = yield* readTextFile(fs, `${soulPath}/${files.agents}`);
           }
           if (files.style) {
-            manifest.style_content = yield* readTextFile(fs, `${resolvedDir}/${files.style}`);
+            manifest.style_content = yield* readTextFile(fs, `${soulPath}/${files.style}`);
           }
           if (files.heartbeat) {
-            manifest.heartbeat_content = yield* readTextFile(
-              fs,
-              `${resolvedDir}/${files.heartbeat}`,
-            );
+            manifest.heartbeat_content = yield* readTextFile(fs, `${soulPath}/${files.heartbeat}`);
           }
           if (files.user_template) {
             manifest.user_template_content = yield* readTextFile(
               fs,
-              `${resolvedDir}/${files.user_template}`,
+              `${soulPath}/${files.user_template}`,
             );
           }
           if (manifest.examples) {
             if (manifest.examples.good) {
               manifest.examples_good_content = yield* readTextFile(
                 fs,
-                `${resolvedDir}/${manifest.examples.good}`,
+                `${soulPath}/${manifest.examples.good}`,
               );
             }
             if (manifest.examples.bad) {
               manifest.examples_bad_content = yield* readTextFile(
                 fs,
-                `${resolvedDir}/${manifest.examples.bad}`,
+                `${soulPath}/${manifest.examples.bad}`,
               );
             }
           }
         }
 
         if (files.avatar) {
-          const avatarFullPath = `${resolvedDir}/${files.avatar}`;
+          const avatarFullPath = `${soulPath}/${files.avatar}`;
           const avatarExists = yield* fs.exists(avatarFullPath);
           if (avatarExists) {
             manifest.avatar_path = avatarFullPath;
           }
         }
 
-        yield* Ref.update(cache, (m) => new Map(m).set(cachedKey, manifest));
+        // Cache: upgrade-only (never downgrade)
+        yield* Ref.update(cache, (m) => {
+          const existing = m.get(cacheKey);
+          if (existing && existing.cachedLevel >= level) return m;
+          return new Map(m).set(cacheKey, { manifest, cachedLevel: level });
+        });
 
         return manifest;
-      });
-    };
-
-    // ── Public API ────────────────────────────────────────────────────────────────
-    // All errors are caught, logged, and re-mapped to SoulLoadError.
-    // Consumers handle a single error type with Effect.catchTag("SoulLoadError", ...).
-
-    /**
-     * Load a soul manifest with progressive disclosure.
-     *
-     * Level 1: metadata only (soul.json)
-     * Level 2: include soul_content + identity_content
-     * Level 3: include all content (agents, style, heartbeat, user_template, examples)
-     *
-     * On failure, returns a SoulLoadError with a user-friendly message.
-     * For not-found errors, the error also carries suggestion data in `.offers`.
-     */
-    const load = (soulPath: string, level: number = 2) => {
-      return loadInternal(soulPath, level).pipe(
+      }).pipe(
         Effect.catchTags({
-          SoulNotFoundError: (e) =>
-            Effect.gen(function* () {
-              console.debug(`[loader] Soul not found: ${soulPath}`);
-              const offers = yield* getSoulOffers(e.soulPath);
-              const message = offers
-                ? formatSoulOffers(e.soulPath, offers)
-                : `Soul "${soulPath}" not found.`;
-              return yield* Effect.fail(
-                new SoulLoadError({ message, soulName: e.soulPath, offers: offers ?? undefined }),
-              );
-            }),
+          SoulNotFoundError: (_e) =>
+            Effect.fail(new SoulLoadError({ message: `Soul "${soulName}" not found.`, soulName })),
           ManifestParseError: (e) =>
             Effect.fail(
               new SoulLoadError({
@@ -253,99 +235,151 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
               }),
             ),
         }),
-        Effect.catchAllCause((cause) => {
-          if (Cause.isDieType(cause)) {
-            console.error(`[loader] Defect loading soul "${soulPath}": ${Cause.pretty(cause)}`);
-          } else {
-            console.debug(
-              `[loader] Unexpected error loading soul "${soulPath}": ${Cause.pretty(cause)}`,
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            if (Cause.isDieType(cause)) {
+              yield* Effect.logError(
+                `[loader] Defect loading soul "${soulName}"`,
+                Cause.pretty(cause),
+              );
+            } else {
+              yield* Effect.logWarning(
+                `[loader] Unexpected error loading soul "${soulName}"`,
+                Cause.pretty(cause),
+              );
+            }
+            return yield* Effect.fail(
+              new SoulLoadError({ message: "Error loading soul: Unexpected error", cause }),
             );
-          }
-          return Effect.fail(
-            new SoulLoadError({ message: "Error loading soul: Unexpected error", cause }),
-          );
-        }),
+          }),
+        ),
       );
     };
 
     /**
-     * List all available souls (directory names that contain soul.json).
-     * On failure, returns a SoulLoadError with a user-friendly message.
+     * Load all souls from all search paths at the requested level.
+     * Best-effort per soul — individual failures are logged and skipped.
+     * Fails with SoulLoadError if zero souls are found.
      */
-    const getAllSouls = () => {
-      return getAllSoulsInternal().pipe(
-        Effect.catchTags({
-          NoSoulsFoundError: () => {
-            console.debug("[loader] No souls found in any search path");
-            return Effect.fail(
+    const loadAllSouls = (level: number = 1) => {
+      return Effect.gen(function* () {
+        const seen = new Set<string>();
+        const results: SoulManifest[] = [];
+
+        for (const base of SOUL_SEARCH_PATHS) {
+          const resolvedBase = yield* expandHomeDir(base);
+          const baseExists = yield* fs.exists(resolvedBase);
+          if (!baseExists) continue;
+
+          const entries = yield* fs.readDirectory(resolvedBase);
+
+          for (const entry of entries) {
+            if (seen.has(entry)) continue;
+            seen.add(entry);
+
+            const soulJsonPath = `${resolvedBase}/${entry}/soul.json`;
+            const hasSoul = yield* fs.exists(soulJsonPath);
+            if (!hasSoul) continue;
+
+            const result = yield* loadSoul(entry, level).pipe(
+              Effect.catchAll((e) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(`[loader] Failed to load soul "${entry}": ${e.message}`);
+                  return null as SoulManifest | null;
+                }),
+              ),
+              Effect.catchAllCause((cause) =>
+                Effect.gen(function* () {
+                  yield* Effect.logWarning(
+                    `[loader] Unexpected failure loading soul "${entry}"`,
+                    Cause.pretty(cause),
+                  );
+                  return null as SoulManifest | null;
+                }),
+              ),
+            );
+
+            if (result) {
+              results.push(result);
+            }
+          }
+        }
+
+        if (results.length === 0) {
+          return yield* Effect.fail(
+            new SoulLoadError({ message: "No souls found in any search path." }),
+          );
+        }
+
+        return results;
+      }).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            if (Cause.isDieType(cause)) {
+              yield* Effect.logError("[loader] Defect loading all souls", Cause.pretty(cause));
+            } else {
+              yield* Effect.logWarning(
+                "[loader] Unexpected error loading all souls",
+                Cause.pretty(cause),
+              );
+            }
+            return yield* Effect.fail(
               new SoulLoadError({
-                message: "No souls found. Create a souls/ directory with soul.json files.",
+                message: "Error loading souls: Unexpected error",
+                cause,
               }),
             );
-          },
-        }),
-        Effect.catchAllCause((cause) => {
-          if (Cause.isDieType(cause)) {
-            console.error(`[loader] Defect listing souls: ${Cause.pretty(cause)}`);
-          } else {
-            console.debug(`[loader] Unexpected error listing souls: ${Cause.pretty(cause)}`);
-          }
-          return Effect.fail(
-            new SoulLoadError({ message: "Error listing souls: Unexpected error", cause }),
-          );
-        }),
+          }),
+        ),
       );
     };
 
     /**
-     * Load all souls with level-1 manifests.
-     * Individual load failures are logged and returned as "skipped" entries.
-     * Safe — never fails (failures are captured in the result array).
+     * Get a soul manifest, cache-first.
+     * Normalizes cache key via resolveSoulPath + path.basename.
+     * If found with cachedLevel >= level, returns filtered result.
+     * Otherwise auto-loads via loadSoul (which remaps errors to SoulLoadError).
      */
-    const enumerateSouls = () => {
+    const getSoul = (soulName: string, level: number = 2) => {
       return Effect.gen(function* () {
-        const souls = yield* getAllSouls().pipe(
-          Effect.catchAll(() => Effect.succeed([] as string[])),
+        // Normalize cache key to match how loadSoul stores entries
+        const res = yield* resolveSoulPath(soulName).pipe(
+          Effect.catchAll(() => Effect.succeed(null as string | null)),
         );
-        const entries: EnumeratedSoul[] = [];
-        for (const name of souls) {
-          const entry = yield* load(name, 1).pipe(
-            Effect.map((manifest): EnumeratedSoul => ({ _tag: "loaded", name, manifest })),
-            Effect.catchAll(
-              (e) =>
-                Effect.succeed({
-                  _tag: "skipped",
-                  name,
-                  reason: e.message,
-                }) as Effect.Effect<EnumeratedSoul>,
-            ),
-          );
-          entries.push(entry);
+        const cacheKey = res ? pathSvc.basename(res) : soulName;
+
+        // Cache lookup with normalized key
+        const currentCache = yield* Ref.get(cache);
+        const entry = currentCache.get(cacheKey);
+        if (entry && entry.cachedLevel >= level) {
+          return filterByLevel(entry.manifest, level);
         }
-        return entries;
+
+        // Auto-load on miss or insufficient level
+        return yield* loadSoul(soulName, level).pipe(
+          Effect.map((manifest) => filterByLevel(manifest, level)),
+        );
       });
     };
 
     /**
-     * Find souls matching a regex pattern.
-     * Safe — returns an empty array on error.
+     * List all cached souls at the requested level.
+     * Infallible — returns [] on empty cache.
      */
-    const findMatchingSouls = (pattern: RegExp) => {
-      return findMatchingSoulsInternal(pattern).pipe(
-        Effect.catchAllCause((cause) => {
-          console.debug(
-            `[loader] Error searching souls with pattern ${pattern}: ${Cause.pretty(cause)}`,
-          );
-          return Effect.succeed([] as string[]);
-        }),
-      );
+    const listSouls = (level: number = 1) => {
+      return Effect.gen(function* () {
+        const currentCache = yield* Ref.get(cache);
+        return Array.from(currentCache.values()).map((entry) =>
+          filterByLevel(entry.manifest, level),
+        );
+      });
     };
 
     return {
-      load,
-      getAllSouls,
-      enumerateSouls,
-      findMatchingSouls,
+      getSoul,
+      loadAllSouls,
+      listSouls,
+      loadSoul,
     } as const;
   }),
 }) {}
