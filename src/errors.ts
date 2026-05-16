@@ -7,24 +7,21 @@ import { Data } from "effect";
 /** Soul not found in any search path */
 export class SoulNotFoundError extends Data.TaggedError("SoulNotFoundError")<{
   readonly message: string;
-  readonly soulPath: string;
 }> {}
 
 /** No soul manifests found in any search path */
-export class NoSoulsFoundError extends Data.TaggedError("NoSoulsFoundError") {}
+export class NoSoulsFoundError extends Data.TaggedError("NoSoulsFoundError")<{
+  readonly message: string;
+}> {}
 
 /** Failed to parse a soul.json manifest */
 export class ManifestParseError extends Data.TaggedError("ManifestParseError")<{
   readonly message: string;
-  readonly path: string;
-  readonly cause: unknown;
 }> {}
 
 /** Generic filesystem operation failure */
 export class FileSystemError extends Data.TaggedError("FileSystemError")<{
   readonly message: string;
-  readonly path: string;
-  readonly cause: unknown;
 }> {}
 
 // ── Consumer-Facing Error ─────────────────────────────────────────────────────
@@ -34,7 +31,5 @@ export class FileSystemError extends Data.TaggedError("FileSystemError")<{
 
 export class SoulLoadError extends Data.TaggedError("SoulLoadError")<{
   readonly message: string;
-  readonly soulName?: string;
-  readonly offers?: { matches: string[]; all: string[] };
   readonly cause?: unknown;
 }> {}

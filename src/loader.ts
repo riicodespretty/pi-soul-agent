@@ -1,6 +1,5 @@
 import { Cause, Effect, Ref } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import { Path } from "@effect/platform";
 import type { SoulManifest } from "@/src/types";
 import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "@/src/errors";
 import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
@@ -17,14 +16,8 @@ const SOUL_SEARCH_PATHS = [
 
 interface CacheEntry {
   readonly manifest: SoulManifest;
+  readonly soulPath: string;
   readonly cachedLevel: number;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
 }
 
 /**
@@ -32,7 +25,10 @@ function getErrorMessage(error: unknown): string {
  * Shorthand for `new SoulLoadError({ message, ...(cause ? { cause } : {}) })`.
  */
 function soulLoadError(message: string, cause?: unknown): SoulLoadError {
-  return new SoulLoadError({ message, ...(cause !== undefined ? { cause } : {}) });
+  return new SoulLoadError({
+    message,
+    cause,
+  });
 }
 
 /**
@@ -67,7 +63,6 @@ export function filterByLevel(manifest: SoulManifest, level: number): SoulManife
 export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSpecLoader", {
   effect: Effect.gen(function* () {
     const fs = yield* FileSystem;
-    const pathSvc = yield* Path.Path;
     const cache = yield* Ref.make<Map<string, CacheEntry>>(new Map());
 
     // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -76,17 +71,6 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
     const resolveSoulPath = (soulName: string) => {
       return Effect.gen(function* () {
-        const expandedDirect = yield* expandHomeDir(soulName);
-        const directExists = yield* fs.exists(expandedDirect);
-        if (directExists) {
-          return expandedDirect;
-        }
-        const directWithJson = `${expandedDirect}/soul.json`;
-        const directJsonExists = yield* fs.exists(directWithJson);
-        if (directJsonExists) {
-          return expandedDirect;
-        }
-
         for (const base of SOUL_SEARCH_PATHS) {
           const resolvedBase = yield* expandHomeDir(base);
           const exactPath = `${resolvedBase}/${soulName}/soul.json`;
@@ -96,52 +80,11 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
           }
         }
 
-        const allSouls = yield* getAllSoulsInternal();
-        const escaped = soulName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const pattern = new RegExp(escaped, "i");
-        const matches = allSouls.filter((s: string) => pattern.test(s));
-
-        if (matches.length === 0) {
-          return yield* Effect.fail(
-            new SoulNotFoundError({
-              message: `Soul "${soulName}" not found`,
-              soulPath: soulName,
-            }),
-          );
-        }
-
-        return matches[0];
-      });
-    };
-
-    const getAllSoulsInternal = () => {
-      return Effect.gen(function* () {
-        const seen = new Set<string>();
-        const souls: string[] = [];
-
-        for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = yield* expandHomeDir(base);
-          const baseExists = yield* fs.exists(resolvedBase);
-          if (!baseExists) continue;
-
-          const entries = yield* fs.readDirectory(resolvedBase);
-
-          for (const entry of entries) {
-            if (seen.has(entry)) continue;
-            const soulJsonPath = `${resolvedBase}/${entry}/soul.json`;
-            const hasSoul = yield* fs.exists(soulJsonPath);
-            if (hasSoul) {
-              seen.add(entry);
-              souls.push(entry);
-            }
-          }
-        }
-
-        if (souls.length === 0) {
-          return yield* Effect.fail(new NoSoulsFoundError());
-        }
-
-        return souls;
+        return yield* Effect.fail(
+          new SoulNotFoundError({
+            message: `Soul "${soulName}" not found`,
+          }),
+        );
       });
     };
 
@@ -156,12 +99,27 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
      * Level 2: include soul_content + identity_content
      * Level 3: include all content (agents, style, heartbeat, user_template, examples)
      */
-    const loadSoul = (soulName: string, level: number = 3) => {
+    const loadSoul = (soulName: string, soulPath: string, level: number = 2) => {
       return Effect.gen(function* () {
-        const soulPath = yield* resolveSoulPath(soulName);
-        const cacheKey = pathSvc.basename(soulPath);
-        const manifestPath = `${soulPath}/soul.json`;
+        // Cache hit
+        const currentCache = yield* Ref.get(cache);
+        const entry = currentCache.get(soulName);
+        if (entry) {
+          return filterByLevel(entry.manifest, level);
+        }
 
+        // Soul does not exist
+        const manifestPath = `${soulPath}/soul.json`;
+        const exists = yield* fs.exists(manifestPath);
+        if (!exists) {
+          return yield* Effect.fail(
+            new SoulNotFoundError({
+              message: `Soul "${soulName}" not found`,
+            }),
+          );
+        }
+
+        // Cache miss
         const raw = yield* readJsonFile<Record<string, unknown>>(fs, manifestPath);
         const manifest = parseManifest(raw);
 
@@ -218,60 +176,13 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         // Cache: upgrade-only (never downgrade)
         yield* Ref.update(cache, (m) => {
-          const existing = m.get(cacheKey);
+          const existing = m.get(soulName);
           if (existing && existing.cachedLevel > level) return m;
-          return new Map(m).set(cacheKey, { manifest, cachedLevel: level });
+          return new Map(m).set(soulName, { manifest, soulPath, cachedLevel: level });
         });
 
         return manifest;
-      }).pipe(
-        Effect.catchTags({
-          SoulNotFoundError: (_e) =>
-            Effect.fail(
-              new SoulLoadError({
-                message: `Soul "${soulName}" not found.`,
-                soulName,
-              }),
-            ),
-          NoSoulsFoundError: (_e) =>
-            Effect.fail(soulLoadError("No souls found in any search path.")),
-          ManifestParseError: (e) =>
-            Effect.fail(
-              soulLoadError(`Error parsing soul manifest: ${getErrorMessage(e.cause)}`, e.cause),
-            ),
-          FileSystemError: (e) =>
-            Effect.fail(soulLoadError(`File system error: ${getErrorMessage(e.cause)}`, e.cause)),
-          SystemError: (error) =>
-            Effect.gen(function* () {
-              yield* Effect.logWarning(
-                `[loader] File system error loading soul "${soulName}"`,
-                String(error),
-              );
-              return yield* Effect.fail(
-                soulLoadError(`File system error: ${getErrorMessage(error)}`, error),
-              );
-            }),
-          BadArgument: (error) =>
-            Effect.gen(function* () {
-              yield* Effect.logWarning(
-                `[loader] Bad argument loading soul "${soulName}"`,
-                String(error),
-              );
-              return yield* Effect.fail(
-                soulLoadError(`Bad argument: ${getErrorMessage(error)}`, error),
-              );
-            }),
-        }),
-        Effect.catchAllDefect((defect) =>
-          Effect.gen(function* () {
-            yield* Effect.logError(
-              `[loader] Defect loading soul "${soulName}"`,
-              Cause.pretty(Cause.die(defect)),
-            );
-            return yield* Effect.fail(soulLoadError(`Defect loading soul "${soulName}"`, defect));
-          }),
-        ),
-      );
+      }).pipe(Effect.catchAll((e) => Effect.fail(soulLoadError(e.message, e.cause))));
     };
 
     /**
@@ -286,80 +197,27 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         for (const base of SOUL_SEARCH_PATHS) {
           const resolvedBase = yield* expandHomeDir(base);
-          const baseExists = yield* fs.exists(resolvedBase);
-          if (!baseExists) continue;
+          const soulNames = yield* fs.readDirectory(resolvedBase);
 
-          const entries = yield* fs.readDirectory(resolvedBase);
+          for (const soulName of soulNames) {
+            if (seen.has(soulName)) continue;
+            seen.add(soulName);
 
-          for (const entry of entries) {
-            if (seen.has(entry)) continue;
-            seen.add(entry);
+            const soulPath = `${resolvedBase}/${soulName}/soul.json`;
+            const exists = yield* fs.exists(soulPath);
+            if (!exists) continue;
 
-            const soulJsonPath = `${resolvedBase}/${entry}/soul.json`;
-            const hasSoul = yield* fs
-              .exists(soulJsonPath)
-              .pipe(Effect.catchAll(() => Effect.succeed(false)));
-            if (!hasSoul) continue;
-
-            const result = yield* loadSoul(entry, level).pipe(
-              Effect.catchAll((e) =>
-                Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    `[loader] Failed to load soul "${entry}": ${getErrorMessage(e)}`,
-                  );
-                  return null as SoulManifest | null;
-                }),
-              ),
-              Effect.catchAllDefect((defect) =>
-                Effect.gen(function* () {
-                  yield* Effect.logError(
-                    `[loader] Defect loading soul "${entry}"`,
-                    Cause.pretty(Cause.die(defect)),
-                  );
-                  return null as SoulManifest | null;
-                }),
-              ),
-            );
-
-            if (result) {
-              results.push(result);
-            }
+            const result = yield* loadSoul(soulName, soulPath, level);
+            if (result) results.push();
           }
         }
 
+        if (results.length === 0) {
+          return yield* new NoSoulsFoundError({ message: "No souls found in any search paths." });
+        }
+
         return results;
-      }).pipe(
-        Effect.flatMap((results: SoulManifest[]) =>
-          results.length > 0
-            ? Effect.succeed(results)
-            : Effect.fail(soulLoadError("No souls found in any search path.")),
-        ),
-        Effect.catchTags({
-          SystemError: (error) =>
-            Effect.gen(function* () {
-              yield* Effect.logWarning("[loader] File system error loading souls", String(error));
-              return yield* Effect.fail(
-                soulLoadError(`File system error: ${getErrorMessage(error)}`, error),
-              );
-            }),
-          BadArgument: (error) =>
-            Effect.gen(function* () {
-              yield* Effect.logWarning("[loader] Bad argument loading souls", String(error));
-              return yield* Effect.fail(
-                soulLoadError(`Bad argument: ${getErrorMessage(error)}`, error),
-              );
-            }),
-        }),
-        Effect.catchAllDefect((defect) =>
-          Effect.gen(function* () {
-            yield* Effect.logError(
-              "[loader] Defect loading all souls",
-              Cause.pretty(Cause.die(defect)),
-            );
-            return yield* Effect.fail(soulLoadError("Defect loading all souls", defect));
-          }),
-        ),
-      );
+      }).pipe(Effect.catchAll((e) => Effect.fail(soulLoadError(e.message, e.cause))));
     };
 
     /**
@@ -370,39 +228,21 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
      */
     const getSoul = (soulName: string, level: number = 2) => {
       return Effect.gen(function* () {
-        // Normalize cache key to match how loadSoul stores entries
-        const res = yield* resolveSoulPath(soulName).pipe(
-          Effect.catchAll((error) =>
-            Effect.gen(function* () {
-              yield* Effect.logDebug(
-                `[loader] resolveSoulPath failed for "${soulName}": ${getErrorMessage(error)}`,
-              );
-              return null as string | null;
-            }),
-          ),
-          Effect.catchAllDefect((defect) =>
-            Effect.gen(function* () {
-              yield* Effect.logError(
-                `[loader] Defect in resolveSoulPath for "${soulName}"`,
-                Cause.pretty(Cause.die(defect)),
-              );
-              return null as string | null;
-            }),
-          ),
-        );
-        const cacheKey = res ? pathSvc.basename(res) : soulName;
-
         // Cache lookup with normalized key
         const currentCache = yield* Ref.get(cache);
-        const entry = currentCache.get(cacheKey);
-        if (entry && entry.cachedLevel >= level) {
-          return filterByLevel(entry.manifest, level);
+        const entry = currentCache.get(soulName);
+        if (entry) {
+          if (entry.cachedLevel >= level) {
+            return filterByLevel(entry.manifest, level);
+          }
+
+          // Insufficient level
+          return yield* loadSoul(soulName, entry.soulPath, level);
         }
 
-        // Auto-load on miss or insufficient level
-        return yield* loadSoul(soulName, level).pipe(
-          Effect.map((manifest) => filterByLevel(manifest, level)),
-        );
+        // Cache miss
+        const soulPath = yield* resolveSoulPath(soulName);
+        return yield* loadSoul(soulName, soulPath, level);
       });
     };
 
@@ -410,12 +250,16 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
      * List all cached souls at the requested level.
      * Infallible — returns [] on empty cache.
      */
-    const listSouls = (level: number = 1) => {
+    const listSouls = () => {
       return Effect.gen(function* () {
-        const currentCache = yield* Ref.get(cache);
-        return Array.from(currentCache.values()).map((entry) =>
-          filterByLevel(entry.manifest, level),
-        );
+        const currentCache = Ref.get(cache);
+
+        // Cache miss
+        if ((yield* currentCache).values.length === 0) {
+          yield* loadAllSouls();
+        }
+
+        return Array.from((yield* currentCache).values()).map((entry) => entry.manifest.name);
       });
     };
 
@@ -425,5 +269,17 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       listSouls,
       loadSoul,
     } as const;
-  }),
+  }).pipe(
+    Effect.catchAllDefect((defect) =>
+      Effect.gen(function* () {
+        const message = [
+          `[loader] Defect in SoulSpecLoader`,
+          Cause.pretty(Cause.die(defect)),
+        ] as const;
+
+        yield* Effect.logError(...message);
+        return yield* Effect.fail(soulLoadError(...message));
+      }),
+    ),
+  ),
 }) {}
