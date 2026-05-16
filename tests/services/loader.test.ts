@@ -66,7 +66,7 @@ describe("SoulSpecLoader", () => {
       expect(after.soulContent).toBeDefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer()),
+      Effect.provide(createMockFsLayer([{ manifest: { name: "bodhisattva-coder" }, fileContents: { "SOUL.md": "" } }])),
       Effect.provide(NodePathLayer),
     ),
   );
@@ -465,7 +465,7 @@ describe("Adversarial — loadSoul path edge cases", () => {
       expect(soul.name).toBe("my.custom.soul.v2");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer([{ name: "my.custom.soul.v2" }])),
+      Effect.provide(createMockFsLayer([{ manifest: { name: "my.custom.soul.v2" } }])),
       Effect.provide(NodePathLayer),
     ),
   );
@@ -477,7 +477,7 @@ describe("Adversarial — loadSoul path edge cases", () => {
       expect(soul.name).toBe("my soul");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer([{ name: "my soul" }])),
+      Effect.provide(createMockFsLayer([{ manifest: { name: "my soul" } }])),
       Effect.provide(NodePathLayer),
     ),
   );
@@ -485,7 +485,7 @@ describe("Adversarial — loadSoul path edge cases", () => {
   it.effect("soul found in second search path when not in first", () => {
     const mockFs = createMockFsLayer([
       {
-        name: "fallback-soul",
+        manifest: { name: "fallback-soul" },
         soulPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
       },
     ]);
@@ -533,7 +533,6 @@ describe("Adversarial — content file behavior", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "missing-file",
             manifest: {
               specVersion: "0.5",
               name: "missing-file",
@@ -574,8 +573,8 @@ describe("Adversarial — content file behavior", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "bodhisattva-coder",
-            files: { "SOUL.md": "# Soul content" },
+            manifest: { name: "bodhisattva-coder" },
+            fileContents: { "SOUL.md": "# Soul content" },
           },
         ]),
       ),
@@ -594,7 +593,6 @@ describe("Adversarial — content file behavior", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "avatar-soul",
             manifest: {
               specVersion: "0.5",
               name: "avatar-soul",
@@ -613,7 +611,7 @@ describe("Adversarial — content file behavior", () => {
               environment: "virtual",
               interactionMode: "text",
             },
-            files: { "SOUL.md": "# Soul", "avatar.png": "image-bytes" },
+            fileContents: { "SOUL.md": "# Soul", "avatar.png": "image-bytes" },
           },
         ]),
       ),
@@ -639,7 +637,6 @@ describe("Adversarial — content file behavior", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "full-soul",
             manifest: {
               specVersion: "0.5",
               name: "full-soul",
@@ -667,7 +664,7 @@ describe("Adversarial — content file behavior", () => {
               environment: "virtual",
               interactionMode: "text",
             },
-            files: {
+            fileContents: {
               "SOUL.md": "Hello Soul",
               "IDENTITY.md": "Hello Identity",
               "AGENTS.md": "Hello Agents",
@@ -694,7 +691,7 @@ describe("Adversarial — content file behavior", () => {
       expect(soul.name).toBe("no-examples");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer([{ name: "no-examples", files: { "SOUL.md": "# Soul" } }])),
+      Effect.provide(createMockFsLayer([{ manifest: { name: "no-examples" }, fileContents: { "SOUL.md": "# Soul" } }])),
       Effect.provide(NodePathLayer),
     ),
   );
@@ -716,8 +713,8 @@ describe("Adversarial — loadAllSouls contract", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "valid-soul",
-            files: { "SOUL.md": "# Content" },
+            manifest: { name: "valid-soul" },
+            fileContents: { "SOUL.md": "# Content" },
           },
         ]),
       ),
@@ -736,11 +733,9 @@ describe("Adversarial — loadAllSouls contract", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "duplicate",
             manifest: { name: "duplicate", displayName: "First" },
           },
           {
-            name: "duplicate",
             manifest: { name: "duplicate", displayName: "Second" },
             soulPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
           },
@@ -781,8 +776,8 @@ describe("Adversarial — cache isolation", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "bodhisattva-coder",
-            files: { "SOUL.md": "# Persistent content" },
+            manifest: { name: "bodhisattva-coder" },
+            fileContents: { "SOUL.md": "# Persistent content" },
           },
         ]),
       ),
@@ -798,7 +793,7 @@ describe("Adversarial — cache isolation", () => {
       expect(err._tag).toBe("SoulLoadError");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer([{ name: "soul-a" }])),
+      Effect.provide(createMockFsLayer([{ manifest: { name: "soul-a" } }])),
       Effect.provide(NodePathLayer),
     ),
   );
@@ -875,7 +870,7 @@ describe("Adversarial — multiple souls", () => {
       expect(names).toEqual(["alpha", "beta", "gamma"]);
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer([{ name: "beta" }, { name: "alpha" }, { name: "gamma" }])),
+      Effect.provide(createMockFsLayer([{ manifest: { name: "beta" } }, { manifest: { name: "alpha" } }, { manifest: { name: "gamma" } }])),
       Effect.provide(NodePathLayer),
     ),
   );
@@ -891,8 +886,8 @@ describe("Adversarial — multiple souls", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "bodhisattva-coder",
-            files: { "SOUL.md": "# Cached" },
+            manifest: { name: "bodhisattva-coder" },
+            fileContents: { "SOUL.md": "# Cached" },
           },
         ]),
       ),
@@ -913,8 +908,8 @@ describe("Adversarial — multiple souls", () => {
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
         createMockFsLayer([
-          { name: "soul-1", files: { "SOUL.md": "# Content for 1" } },
-          { name: "soul-2", files: { "SOUL.md": "# Content for 2" } },
+          { manifest: { name: "soul-1" }, fileContents: { "SOUL.md": "# Content for 1" } },
+          { manifest: { name: "soul-2" }, fileContents: { "SOUL.md": "# Content for 2" } },
         ]),
       ),
       Effect.provide(NodePathLayer),
@@ -938,8 +933,8 @@ describe("Adversarial — listSouls", () => {
       Effect.provide(
         createMockFsLayer([
           {
-            name: "bodhisattva-coder",
-            files: { "SOUL.md": "# Soul" },
+            manifest: { name: "bodhisattva-coder" },
+            fileContents: { "SOUL.md": "# Soul" },
           },
         ]),
       ),
@@ -956,8 +951,8 @@ describe("Adversarial — listSouls", () => {
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
         createMockFsLayer([
-          { name: "a", files: { "SOUL.md": "# A" } },
-          { name: "b", files: { "SOUL.md": "# B" } },
+          { manifest: { name: "a" }, fileContents: { "SOUL.md": "# A" } },
+          { manifest: { name: "b" }, fileContents: { "SOUL.md": "# B" } },
         ]),
       ),
       Effect.provide(NodePathLayer),

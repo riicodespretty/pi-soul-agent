@@ -10,16 +10,16 @@ import type { DeepPartial, SoulManifest, SoulManifestData } from "@/src/types";
 
 /**
  * Soul definition for building mock FS layers.
- * The `manifest` field uses camelCase keys matching the SoulManifest type
- * (no conversion needed — soul.json and the TypeScript type are now in sync).
+ *
+ * The `manifest` captures everything.
+ * Content files referenced in `manifest.files` and `manifest.examples`
+ * are auto-created with empty content. Use `fileContents` to override.
  */
 export interface MockSoulDef {
-  /** Soul directory name (used as both directory name and manifest `name`) */
-  readonly name: string;
-  /** Explicit partial manifest to merge with auto-generated defaults. */
+  /** Partial manifest to merge with auto-generated defaults. */
   readonly manifest?: DeepPartial<SoulManifestData>;
-  /** Content files to create: filename → content string. */
-  readonly files?: Record<string, string>;
+  /** Content overrides for mock FS files: filename → content string. */
+  readonly fileContents?: Record<string, string>;
   /** Search path to place this soul in (default: ~/.pi/agent/souls) */
   readonly soulPath?: string;
 }
@@ -53,9 +53,7 @@ const DEFAULT_SOURCE: SoulManifestData = {
  * because parseManifest only parses the JSON manifest — loadSoul sets them
  * at runtime by reading content files.
  */
-export const MOCK_SOUL_MANIFEST: SoulManifest = parseManifest(
-  DEFAULT_SOURCE as unknown as Record<string, unknown>,
-);
+export const MOCK_SOUL_MANIFEST: SoulManifest = parseManifest(DEFAULT_SOURCE);
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -78,11 +76,11 @@ const enoent = (method: string, path: string) =>
  *   - An entry in its parent search path's directory listing
  *   - Its own directory (for listing & exists checks)
  *   - A `soul.json` file (auto-generated + merged with explicit manifest)
- *   - Any content files declared via `.files`
+ *   - Content files auto-created from `manifest.files` + `manifest.examples`
  *
  * @example
  * ```ts
- * createMockFsLayer([{ name: "my-soul", files: { "SOUL.md": "# Hello" } }])
+ * createMockFsLayer([{ manifest: { name: "my-soul", files: { soul: "SOUL.md" } } }])
  * ```
  */
 export function createMockFsLayer(souls?: MockSoulDef[]) {
@@ -94,36 +92,39 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
   const mkdir = (p: string) => (dirs[p] ??= []);
 
   // 2. File contents (soul.json + content files) for each soul
-  const files: Record<string, string> = {};
+  const fileSystem: Record<string, string> = {};
 
-  const defs = souls ?? [{ name: "bodhisattva-coder", files: { "SOUL.md": "" } }];
+  const defaultDef = (): MockSoulDef => ({
+    manifest: { name: "bodhisattva-coder" },
+  });
+  const defs = souls ?? [defaultDef()];
   for (const soul of defs) {
+    const merged = {
+      ...DEFAULT_SOURCE,
+      ...soul.manifest,
+      name: soul.manifest?.name ?? DEFAULT_SOURCE.name,
+    };
+    const soulName = merged.name;
     const baseDir = soul.soulPath ?? expand(SOUL_SEARCH_PATHS[0]);
-    const soulDir = `${baseDir}/${soul.name}`;
+    const soulDir = `${baseDir}/${soulName}`;
 
-    mkdir(baseDir).push(soul.name);
+    mkdir(baseDir).push(soulName);
     mkdir(soulDir);
 
-    // Merge explicit manifest with defaults
-    files[`${soulDir}/soul.json`] = JSON.stringify({
-      ...DEFAULT_SOURCE,
-      name: soul.name,
-      displayName: soul.name,
-      description: "A test soul",
-      tags: [],
-      ...soul.manifest,
-    });
+    // Write soul.json
+    fileSystem[`${soulDir}/soul.json`] = JSON.stringify(merged);
 
-    for (const [f, content] of Object.entries(soul.files ?? {})) {
-      files[`${soulDir}/${f}`] = content;
+    // Write explicitly provided content files only
+    for (const [fp, content] of Object.entries(soul.fileContents ?? {})) {
+      fileSystem[`${soulDir}/${fp}`] = content;
     }
   }
 
   // 3. Build the layer
   return FileSystem.layerNoop({
-    exists: (path) => Effect.succeed(path in dirs || path in files),
+    exists: (path) => Effect.succeed(path in dirs || path in fileSystem),
     readFileString: (path) => {
-      if (path in files) return Effect.succeed(files[path]);
+      if (path in fileSystem) return Effect.succeed(fileSystem[path]);
       return Effect.fail(enoent("readFileString", path));
     },
     readDirectory: (path) => {
