@@ -95,7 +95,10 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         if (matches.length === 0) {
           return yield* Effect.fail(
-            new SoulNotFoundError({ message: `Soul "${soulName}" not found`, soulPath: soulName }),
+            new SoulNotFoundError({
+              message: `Soul "${soulName}" not found`,
+              soulPath: soulName,
+            }),
           );
         }
 
@@ -216,9 +219,18 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       }).pipe(
         Effect.catchTags({
           SoulNotFoundError: (_e) =>
-            Effect.fail(new SoulLoadError({ message: `Soul "${soulName}" not found.`, soulName })),
+            Effect.fail(
+              new SoulLoadError({
+                message: `Soul "${soulName}" not found.`,
+                soulName,
+              }),
+            ),
           NoSoulsFoundError: (_e) =>
-            Effect.fail(new SoulLoadError({ message: `No souls found in any search path.` })),
+            Effect.fail(
+              new SoulLoadError({
+                message: `No souls found in any search path.`,
+              }),
+            ),
           ManifestParseError: (e) =>
             Effect.fail(
               new SoulLoadError({
@@ -234,21 +246,31 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
               }),
             ),
         }),
-        Effect.catchAllCause((cause) =>
+        Effect.catchAll((error) =>
           Effect.gen(function* () {
-            if (Cause.isDieType(cause)) {
-              yield* Effect.logError(
-                `[loader] Defect loading soul "${soulName}"`,
-                Cause.pretty(cause),
-              );
-            } else {
-              yield* Effect.logWarning(
-                `[loader] Unexpected error loading soul "${soulName}"`,
-                Cause.pretty(cause),
-              );
-            }
+            yield* Effect.logWarning(
+              `[loader] Unexpected error loading soul "${soulName}"`,
+              String(error),
+            );
             return yield* Effect.fail(
-              new SoulLoadError({ message: "Error loading soul: Unexpected error", cause }),
+              new SoulLoadError({
+                message: `Error loading soul: ${getErrorMessage(error)}`,
+                cause: error,
+              }),
+            );
+          }),
+        ),
+        Effect.catchAllDefect((defect) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(
+              `[loader] Defect loading soul "${soulName}"`,
+              Cause.pretty(Cause.die(defect)),
+            );
+            return yield* Effect.fail(
+              new SoulLoadError({
+                message: `Defect loading soul "${soulName}"`,
+                cause: defect,
+              }),
             );
           }),
         ),
@@ -289,11 +311,11 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
                   return null as SoulManifest | null;
                 }),
               ),
-              Effect.catchAllCause((cause) =>
+              Effect.catchAllDefect((defect) =>
                 Effect.gen(function* () {
-                  yield* Effect.logWarning(
-                    `[loader] Unexpected failure loading soul "${entry}"`,
-                    Cause.pretty(cause),
+                  yield* Effect.logError(
+                    `[loader] Defect loading soul "${entry}"`,
+                    Cause.pretty(Cause.die(defect)),
                   );
                   return null as SoulManifest | null;
                 }),
@@ -308,26 +330,35 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         if (results.length === 0) {
           return yield* Effect.fail(
-            new SoulLoadError({ message: "No souls found in any search path." }),
+            new SoulLoadError({
+              message: "No souls found in any search path.",
+            }),
           );
         }
 
         return results;
       }).pipe(
-        Effect.catchAllCause((cause) =>
+        Effect.catchAll((error) =>
           Effect.gen(function* () {
-            if (Cause.isDieType(cause)) {
-              yield* Effect.logError("[loader] Defect loading all souls", Cause.pretty(cause));
-            } else {
-              yield* Effect.logWarning(
-                "[loader] Unexpected error loading all souls",
-                Cause.pretty(cause),
-              );
-            }
+            yield* Effect.logWarning("[loader] Unexpected error loading all souls", String(error));
             return yield* Effect.fail(
               new SoulLoadError({
-                message: "Error loading souls: Unexpected error",
-                cause,
+                message: `Error loading souls: ${getErrorMessage(error)}`,
+                cause: error,
+              }),
+            );
+          }),
+        ),
+        Effect.catchAllDefect((defect) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(
+              "[loader] Defect loading all souls",
+              Cause.pretty(Cause.die(defect)),
+            );
+            return yield* Effect.fail(
+              new SoulLoadError({
+                message: "Defect loading all souls",
+                cause: defect,
               }),
             );
           }),
@@ -345,7 +376,23 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       return Effect.gen(function* () {
         // Normalize cache key to match how loadSoul stores entries
         const res = yield* resolveSoulPath(soulName).pipe(
-          Effect.catchAll(() => Effect.succeed(null as string | null)),
+          Effect.catchAll((error) =>
+            Effect.gen(function* () {
+              yield* Effect.logDebug(
+                `[loader] resolveSoulPath failed for "${soulName}": ${getErrorMessage(error)}`,
+              );
+              return null as string | null;
+            }),
+          ),
+          Effect.catchAllDefect((defect) =>
+            Effect.gen(function* () {
+              yield* Effect.logError(
+                `[loader] Defect in resolveSoulPath for "${soulName}"`,
+                Cause.pretty(Cause.die(defect)),
+              );
+              return null as string | null;
+            }),
+          ),
         );
         const cacheKey = res ? pathSvc.basename(res) : soulName;
 
