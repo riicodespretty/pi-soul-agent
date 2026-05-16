@@ -1,7 +1,7 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema as S } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
 import { Path } from "@effect/platform";
-import type { ActiveSoul } from "@/src/types";
+import { ActiveSoulSchema, type ActiveSoul } from "@/src/types";
 import { FileSystemError } from "@/src/errors";
 import { expandHome } from "@/src/services/soul-fs";
 
@@ -61,18 +61,15 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           if (!exists) return Option.none();
 
           const content = yield* fs.readFileString(filePath);
-          const parseResult: unknown = yield* Effect.try({
+          const parsed: unknown = yield* Effect.try({
             try: () => JSON.parse(content),
             catch: () => undefined,
           });
-          if (
-            parseResult &&
-            typeof (parseResult as Record<string, unknown>).soul === "string" &&
-            typeof (parseResult as Record<string, unknown>).level === "number"
-          ) {
-            return Option.some(parseResult as ActiveSoul);
-          }
-          return Option.none();
+          if (parsed === undefined) return Option.none();
+
+          const result = S.decodeUnknownEither(ActiveSoulSchema)(parsed);
+          if (result._tag === "Left") return Option.none();
+          return Option.some(result.right);
         }).pipe(Effect.catchAll(() => Effect.succeed(Option.none<ActiveSoul>())));
       };
 

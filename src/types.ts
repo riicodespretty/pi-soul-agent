@@ -285,12 +285,13 @@ export interface WritableSoulManifestProps {
 /** Main SoulSpec manifest — on-disk fields from schema + runtime-loaded content. */
 export interface SoulManifest extends WritableSoulManifestProps, SoulManifestData {}
 
-/** Persisted active soul entry */
-export interface ActiveSoul {
-  readonly soul: string;
-  readonly level: number;
-  readonly updatedAt: number;
-}
+/** Schema for persisted active soul entry (runtime data, not from soul.json). */
+export const ActiveSoulSchema = S.Struct({
+  soul: S.String,
+  level: S.Number,
+  updatedAt: S.Number,
+});
+export type ActiveSoul = S.Schema.Type<typeof ActiveSoulSchema>;
 
 /** Application runtime type for the Pi extension bridge */
 export type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>;
