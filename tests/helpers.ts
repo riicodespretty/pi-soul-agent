@@ -81,15 +81,12 @@ const enoent = (method: string, path: string) =>
  * createMockFsLayer([{ name: "my-soul", files: { "SOUL.md": "# Hello" } }])
  * ```
  */
-const expand = (p: string) => Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
-
 export function createMockFsLayer(souls?: MockSoulDef[]) {
+  const expand = (p: string) => Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
+
   // 1. Directory skeleton — all search paths as empty dirs
   const dirs: Record<string, string[]> = {};
-  const expandedDirs = SOUL_SEARCH_PATHS.map(expand);
-  for (const p of expandedDirs) {
-    dirs[p] = [];
-  }
+  for (const p of SOUL_SEARCH_PATHS) dirs[expand(p)] = [];
   const mkdir = (p: string) => (dirs[p] ??= []);
 
   // 2. File contents (soul.json + content files) for each soul
@@ -97,7 +94,7 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
 
   const defs = souls ?? [{ name: "bodhisattva-coder", files: { "SOUL.md": "" } }];
   for (const soul of defs) {
-    const baseDir = soul.soulPath ?? expandedDirs[0];
+    const baseDir = soul.soulPath ?? expand(SOUL_SEARCH_PATHS[0]);
     const soulDir = `${baseDir}/${soul.name}`;
 
     mkdir(baseDir).push(soul.name);
