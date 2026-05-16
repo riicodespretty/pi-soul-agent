@@ -21,15 +21,8 @@ export interface MockSoulDef {
   /** Content files to create: filename → content string. */
   readonly files?: Record<string, string>;
   /** Search path to place this soul in (default: ~/.pi/agent/souls) */
-  readonly searchPath?: string;
+  readonly soulPath?: string;
 }
-
-// ── Defaults ──────────────────────────────────────────────────────────────────
-
-const HOME = "/Users/test";
-
-/** First search path (~/.pi/agent/souls) expanded with test HOME */
-export const FIRST_PATH = `${HOME}/.pi/agent/souls`;
 
 // ── Source of truth: camelCase JSON (what a real soul.json looks like) ──────
 
@@ -88,11 +81,14 @@ const enoent = (method: string, path: string) =>
  * createMockFsLayer([{ name: "my-soul", files: { "SOUL.md": "# Hello" } }])
  * ```
  */
+const expand = (p: string) => Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
+
 export function createMockFsLayer(souls?: MockSoulDef[]) {
   // 1. Directory skeleton — all search paths as empty dirs
   const dirs: Record<string, string[]> = {};
-  for (const p of SOUL_SEARCH_PATHS) {
-    dirs[Effect.runSync(Effect.provide(expandHome(p), NodePathLayer))] = [];
+  const expandedDirs = SOUL_SEARCH_PATHS.map(expand);
+  for (const p of expandedDirs) {
+    dirs[p] = [];
   }
   const mkdir = (p: string) => (dirs[p] ??= []);
 
@@ -101,7 +97,7 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
 
   const defs = souls ?? [{ name: "bodhisattva-coder", files: { "SOUL.md": "" } }];
   for (const soul of defs) {
-    const baseDir = soul.searchPath ?? FIRST_PATH;
+    const baseDir = soul.soulPath ?? expandedDirs[0];
     const soulDir = `${baseDir}/${soul.name}`;
 
     mkdir(baseDir).push(soul.name);
@@ -117,8 +113,8 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
         tags: [],
       });
 
-    for (const [fn, content] of Object.entries(soul.files ?? {})) {
-      files[`${soulDir}/${fn}`] = content;
+    for (const [f, content] of Object.entries(soul.files ?? {})) {
+      files[`${soulDir}/${f}`] = content;
     }
   }
 

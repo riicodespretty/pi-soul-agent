@@ -6,11 +6,14 @@ import { vi } from "vitest";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import { SoulSpecLoader, filterByLevel } from "@/src/loader";
 import { SoulLoadError } from "@/src/errors";
-import { createMockFsLayer, FIRST_PATH } from "@/tests/helpers";
+import { createMockFsLayer } from "@/tests/helpers";
 import type { SoulManifest } from "@/src/types";
 
 // Stub HOME so expandHome("~/...") resolves to paths matching the mock FS.
 vi.stubEnv("HOME", "/Users/test");
+
+/** Expanded first search path (matches SOUL_SEARCH_PATHS[0] with test HOME). */
+const FIRST_PATH = "/Users/test/.pi/agent/souls";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -483,7 +486,7 @@ describe("Adversarial — loadSoul path edge cases", () => {
     const mockFs = createMockFsLayer([
       {
         name: "fallback-soul",
-        searchPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
+        soulPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
       },
     ]);
 
@@ -739,7 +742,7 @@ describe("Adversarial — loadAllSouls contract", () => {
           {
             name: "duplicate",
             manifestJson: JSON.stringify({ name: "duplicate", displayName: "Second" }),
-            searchPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
+            soulPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
           },
         ]),
       ),
