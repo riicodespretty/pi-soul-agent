@@ -37,28 +37,32 @@ const REL_PATH_1 = ".pi/souls";
 const REL_PATH_2 = "./souls";
 
 /**
- * Default soul manifest as camelCase JSON.
- * This is what parseManifest actually expects from a real soul.json on disk.
- * (The SoulManifest TS type uses snake_case internally after parsing.)
+ * Convert snake_case SoulManifest fields to camelCase keys for soul.json.
+ * This is what parseManifest reads from disk — it expects camelCase JSON.
  */
-export const DEFAULT_MANIFEST_JSON = JSON.stringify({
-  specVersion: "0.5",
-  name: "bodhisattva-coder",
-  displayName: "Bodhisattva Coder",
-  version: "1.0.0",
-  description: "A test bodhisattva coder soul",
-  author: { name: "Test Author" },
-  license: "MIT",
-  tags: ["coder", "bodhisattva"],
-  category: "general",
-  compatibility: { models: [], frameworks: [] },
-  allowedTools: [],
-  recommendedSkills: [],
-  files: { soul: "SOUL.md" },
-  deprecated: false,
-  environment: "virtual",
-  interactionMode: "text",
-});
+function toCamelCaseJson(manifest: SoulManifest): Record<string, unknown> {
+  return {
+    specVersion: manifest.spec_version,
+    name: manifest.name,
+    displayName: manifest.display_name,
+    version: manifest.version,
+    description: manifest.description,
+    author: manifest.author,
+    license: manifest.license,
+    tags: manifest.tags,
+    category: manifest.category,
+    compatibility: manifest.compatibility,
+    allowedTools: manifest.allowed_tools,
+    recommendedSkills: manifest.recommended_skills,
+    files: manifest.files,
+    examples: manifest.examples,
+    deprecated: manifest.deprecated,
+    supersededBy: manifest.superseded_by,
+    repository: manifest.repository,
+    environment: manifest.environment,
+    interactionMode: manifest.interaction_mode,
+  };
+}
 
 /**
  * Default mock soul manifest (snake_case TS type fields).
@@ -91,6 +95,12 @@ export const MOCK_SOUL_MANIFEST: SoulManifest = {
   identity_content: "You are Bodhisattva Coder, a helpful AI assistant.",
 };
 
+/**
+ * Default soul manifest as camelCase JSON, derived from MOCK_SOUL_MANIFEST.
+ * This is what parseManifest actually expects from a real soul.json on disk.
+ */
+export const DEFAULT_MANIFEST_JSON = JSON.stringify(toCamelCaseJson(MOCK_SOUL_MANIFEST));
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 const enoent = (method: string, path: string) =>
@@ -104,22 +114,11 @@ const enoent = (method: string, path: string) =>
 
 function defaultManifestJson(name: string): string {
   return JSON.stringify({
-    specVersion: "0.5",
+    ...toCamelCaseJson(MOCK_SOUL_MANIFEST),
     name,
     displayName: name,
-    version: "1.0.0",
     description: "A test soul",
-    author: { name: "Test Author" },
-    license: "MIT",
     tags: [],
-    category: "general",
-    compatibility: { models: [], frameworks: [] },
-    allowedTools: [],
-    recommendedSkills: [],
-    files: { soul: "SOUL.md" },
-    deprecated: false,
-    environment: "virtual",
-    interactionMode: "text",
   });
 }
 
