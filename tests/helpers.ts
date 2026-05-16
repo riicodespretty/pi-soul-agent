@@ -4,7 +4,7 @@ import { SystemError } from "@effect/platform/Error";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import { SoulSpecLoader, SOUL_SEARCH_PATHS } from "@/src/loader";
 import { expandHome, parseManifest } from "@/src/services/soul-fs";
-import type { DeepPartial, SoulManifest, SoulManifestData } from "@/src/types";
+import type { DeepPartial, SoulFiles, SoulManifest, SoulManifestData } from "@/src/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -13,32 +13,59 @@ import type { DeepPartial, SoulManifest, SoulManifestData } from "@/src/types";
  * Any field from SoulManifestData can be provided; the rest get defaults.
  * Content files referenced in `files` are auto-created with empty content.
  */
-export type MockSoulDef = DeepPartial<SoulManifestData> & {
+export type MockSoulManifest = DeepPartial<SoulManifestData> & {
+  readonly name: string;
   /** Search path to place this soul in (default: ~/.pi/agent/souls) */
   readonly soulPath?: string;
 };
 
 // ── Source of truth: typed default manifest — matches what a real soul.json looks like ──
-
-const DEFAULT_SOURCE: SoulManifestData = {
+export const DEFAULT_SOURCE: SoulManifestData = {
   specVersion: "0.5",
-  name: "bodhisattva-coder",
-  displayName: "Bodhisattva Coder",
+  name: "senior-devops-engineer",
+  displayName: "Senior DevOps Engineer",
   version: "1.0.0",
-  description: "A test bodhisattva coder soul",
-  author: { name: "Test Author" },
-  license: "MIT",
-  tags: ["coder", "bodhisattva"],
-  category: "general",
-  compatibility: { models: [], frameworks: [] },
-  allowedTools: [],
-  recommendedSkills: [],
-  files: { soul: "SOUL.md" },
+  description:
+    "Infrastructure-obsessed DevOps engineer with strong opinions on CI/CD, monitoring, and incident response.",
+  author: {
+    name: "TomLee",
+    github: "TomLeeLive",
+  },
+  license: "Apache-2.0",
+  tags: ["devops", "infrastructure", "cicd", "monitoring"],
+  category: "work/devops",
+  compatibility: {
+    openclaw: ">=2026.2.0",
+    models: ["anthropic/*", "openai/*"],
+    frameworks: ["openclaw", "clawdbot", "zeroclaw", "cursor"],
+  },
+  allowedTools: ["browser", "exec", "web_search", "github"],
+  recommendedSkills: [
+    { name: "github", version: ">=1.0.0", required: false },
+    { name: "healthcheck", required: true },
+  ],
+  files: {
+    soul: "SOUL.md",
+    identity: "IDENTITY.md",
+    agents: "AGENTS.md",
+    heartbeat: "HEARTBEAT.md",
+    style: "STYLE.md",
+    userTemplate: "USER_TEMPLATE.md",
+    avatar: "avatar/avatar.png",
+  },
+  examples: {
+    good: "examples/good-outputs.md",
+    bad: "examples/bad-outputs.md",
+  },
+  disclosure: {
+    summary: "Infrastructure-obsessed DevOps engineer with strong CI/CD opinions.",
+  },
   deprecated: false,
+  repository: "https://github.com/clawsouls/souls",
   environment: "virtual",
   interactionMode: "text",
-  sensors: [],
-  actuators: [],
+  sensors: {},
+  actuators: {},
 };
 
 /**
@@ -77,7 +104,7 @@ const enoent = (method: string, path: string) =>
  * createMockFsLayer([{ name: "my-soul", files: { soul: "SOUL.md" } }])
  * ```
  */
-export function createMockFsLayer(souls?: MockSoulDef[]) {
+export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFEST]) {
   const expand = (p: string) => Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
 
   // 1. Directory skeleton — all search paths as empty dirs
@@ -88,13 +115,11 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
   // 2. File contents (soul.json + content files) for each soul
   const fileSystem: Record<string, string> = {};
 
-  const defs = souls ?? [{} as MockSoulDef];
-  for (const soul of defs) {
+  for (const soul of souls) {
     const { soulPath, ...manifestFields } = soul;
-    const merged = {
+    const merged: MockSoulManifest = {
       ...DEFAULT_SOURCE,
       ...manifestFields,
-      name: manifestFields.name ?? DEFAULT_SOURCE.name,
     };
     const soulName = merged.name;
     const baseDir = soulPath ?? expand(SOUL_SEARCH_PATHS[0]);
@@ -109,10 +134,10 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
     // Auto-create content files from manifest.files entries (empty content)
     const mf = merged.files;
     if (mf) {
-      for (const key of ["soul", "identity", "agents", "heartbeat", "style", "userTemplate", "avatar"] as const) {
-        const path = mf[key as keyof typeof mf];
+      (Object.keys(mf) as Array<keyof SoulFiles>).forEach((key) => {
+        const path = mf[key];
         if (path) fileSystem[`${soulDir}/${path}`] = "";
-      }
+      });
     }
     const examples = merged.examples;
     if (examples) {

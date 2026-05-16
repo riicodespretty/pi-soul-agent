@@ -160,8 +160,12 @@ export interface SoulManifest extends WritableSoulManifestProps {
   readonly interactionMode: InteractionMode;
   readonly hardwareConstraints?: HardwareConstraints;
   readonly safety?: Safety;
-  readonly sensors: Sensor[];
-  readonly actuators: Actuator[];
+  readonly sensors: {
+    [key: string]: Sensor;
+  };
+  readonly actuators: {
+    [key: string]: Actuator;
+  };
 }
 
 /** Persisted active soul entry */
