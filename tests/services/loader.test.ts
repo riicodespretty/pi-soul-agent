@@ -32,8 +32,8 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul does not downgrade cache level", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      yield* loader.loadSoul("bodhisattva-coder", 3);
-      yield* loader.loadSoul("bodhisattva-coder", 1);
+      yield* loader.getSoul("bodhisattva-coder", 3);
+      yield* loader.getSoul("bodhisattva-coder", 1);
       const after = yield* loader.getSoul("bodhisattva-coder", 3);
       expect(after.soul_content).toBeDefined();
     }).pipe(
@@ -48,7 +48,7 @@ describe("SoulSpecLoader", () => {
   it.effect("listSouls returns [] on empty cache", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const souls = yield* loader.listSouls(1);
+      const souls = yield* loader.listSouls();
       expect(Array.isArray(souls)).toBe(true);
       expect(souls.length).toBe(0);
     }).pipe(
@@ -62,7 +62,7 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul at level 1 returns metadata-only manifest", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const soul = yield* loader.loadSoul("bodhisattva-coder", 1);
+      const soul = yield* loader.getSoul("bodhisattva-coder", 1);
       expect(soul.soul_content).toBeUndefined();
       expect(soul.identity_content).toBeUndefined();
     }).pipe(
@@ -124,7 +124,7 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul produces SoulLoadError on missing soul", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const result = yield* Effect.flip(loader.loadSoul("definitely-not-exist-12345"));
+      const result = yield* Effect.flip(loader.getSoul("definitely-not-exist-12345"));
       expect(result._tag).toBe("SoulLoadError");
       expect(typeof result.message).toBe("string");
     }).pipe(
@@ -138,7 +138,6 @@ describe("SoulSpecLoader", () => {
   it.effect("getSoul finds cached entry via normalized key", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      yield* loader.loadSoul("bodhisattva-coder", 1);
       const soul = yield* loader.getSoul("bodhisattva-coder", 1);
       expect(soul.name).toBeDefined();
     }).pipe(
@@ -159,7 +158,7 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul produces SoulLoadError on malformed JSON", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const result = yield* Effect.flip(loader.loadSoul("corrupt-soul", 1));
+      const result = yield* Effect.flip(loader.getSoul("corrupt-soul", 1));
       expect(result._tag).toBe("SoulLoadError");
       expect(typeof result.message).toBe("string");
     }).pipe(
@@ -219,7 +218,7 @@ describe("SoulSpecLoader", () => {
   it.effect("loadSoul surfaces FileSystemError as SoulLoadError", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const result = yield* Effect.flip(loader.loadSoul("unreadable-soul", 1));
+      const result = yield* Effect.flip(loader.getSoul("unreadable-soul", 1));
       expect(result._tag).toBe("SoulLoadError");
       expect(typeof result.message).toBe("string");
     }).pipe(

@@ -1,6 +1,6 @@
-import { Cause, Effect, Ref } from "effect";
+import { Cause, Effect, Option, Ref } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import type { SoulManifest } from "@/src/types";
+import type { SoulManifest, WritableSoulManifestProps } from "@/src/types";
 import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "@/src/errors";
 import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
 
@@ -38,17 +38,16 @@ function soulLoadError(message: string, cause?: unknown): SoulLoadError {
  * Level 3: all content fields
  */
 export function filterByLevel(manifest: SoulManifest, level: number): SoulManifest {
-  if (level >= 3) return { ...manifest };
-
   const result = { ...manifest };
 
-  // Level < 3: remove level-3-only content fields
-  delete result.agents_content;
-  delete result.style_content;
-  delete result.heartbeat_content;
-  delete result.user_template_content;
-  delete result.examples_good_content;
-  delete result.examples_bad_content;
+  if (level < 3) {
+    delete result.agents_content;
+    delete result.style_content;
+    delete result.heartbeat_content;
+    delete result.user_template_content;
+    delete result.examples_good_content;
+    delete result.examples_bad_content;
+  }
 
   if (level < 2) {
     delete result.soul_content;
@@ -105,74 +104,48 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         const currentCache = yield* Ref.get(cache);
         const entry = currentCache.get(soulName);
         if (entry) {
-          return filterByLevel(entry.manifest, level);
-        }
-
-        // Soul does not exist
-        const manifestPath = `${soulPath}/soul.json`;
-        const exists = yield* fs.exists(manifestPath);
-        if (!exists) {
-          return yield* Effect.fail(
-            new SoulNotFoundError({
-              message: `Soul "${soulName}" not found`,
-            }),
-          );
+          if (entry.cachedLevel >= level) {
+            return filterByLevel(entry.manifest, level);
+          }
         }
 
         // Cache miss
+        const manifestPath = `${soulPath}/soul.json`;
         const raw = yield* readJsonFile<Record<string, unknown>>(fs, manifestPath);
         const manifest = parseManifest(raw);
 
-        const files = manifest.files;
+        // Helper: read an optional content file and set the manifest field
+        const readAndSet = (
+          key: keyof WritableSoulManifestProps,
+          filename: string | undefined,
+          minLevel: number,
+        ) =>
+          Option.fromNullable(filename).pipe(
+            Option.filter((f) => Boolean(f) && level >= minLevel),
+            Effect.transposeMapOption((f) => readTextFile(fs, `${soulPath}/${f}`)),
+            Effect.flatMap((opt) =>
+              Option.isSome(opt)
+                ? Effect.sync(() => {
+                    manifest[key] = opt.value;
+                  })
+                : Effect.void,
+            ),
+          );
 
-        if (level >= 2) {
-          if (files.soul) {
-            manifest.soul_content = yield* readTextFile(fs, `${soulPath}/${files.soul}`);
-          }
-          if (files.identity) {
-            manifest.identity_content = yield* readTextFile(fs, `${soulPath}/${files.identity}`);
-          }
-        }
+        // Level 1 content
+        yield* readAndSet("avatar_path", manifest.files.avatar, 1);
 
-        if (level >= 3) {
-          if (files.agents) {
-            manifest.agents_content = yield* readTextFile(fs, `${soulPath}/${files.agents}`);
-          }
-          if (files.style) {
-            manifest.style_content = yield* readTextFile(fs, `${soulPath}/${files.style}`);
-          }
-          if (files.heartbeat) {
-            manifest.heartbeat_content = yield* readTextFile(fs, `${soulPath}/${files.heartbeat}`);
-          }
-          if (files.user_template) {
-            manifest.user_template_content = yield* readTextFile(
-              fs,
-              `${soulPath}/${files.user_template}`,
-            );
-          }
-          if (manifest.examples) {
-            if (manifest.examples.good) {
-              manifest.examples_good_content = yield* readTextFile(
-                fs,
-                `${soulPath}/${manifest.examples.good}`,
-              );
-            }
-            if (manifest.examples.bad) {
-              manifest.examples_bad_content = yield* readTextFile(
-                fs,
-                `${soulPath}/${manifest.examples.bad}`,
-              );
-            }
-          }
-        }
+        // Level 2 content
+        yield* readAndSet("soul_content", manifest.files.soul, 2);
+        yield* readAndSet("identity_content", manifest.files.identity, 2);
 
-        if (files.avatar) {
-          const avatarFullPath = `${soulPath}/${files.avatar}`;
-          const avatarExists = yield* fs.exists(avatarFullPath);
-          if (avatarExists) {
-            manifest.avatar_path = avatarFullPath;
-          }
-        }
+        // Level 3 content
+        yield* readAndSet("agents_content", manifest.files.agents, 3);
+        yield* readAndSet("style_content", manifest.files.style, 3);
+        yield* readAndSet("heartbeat_content", manifest.files.heartbeat, 3);
+        yield* readAndSet("user_template_content", manifest.files.user_template, 3);
+        yield* readAndSet("examples_good_content", manifest.examples?.good, 3);
+        yield* readAndSet("examples_bad_content", manifest.examples?.bad, 3);
 
         // Cache: upgrade-only (never downgrade)
         yield* Ref.update(cache, (m) => {
@@ -208,7 +181,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
             if (!exists) continue;
 
             const result = yield* loadSoul(soulName, soulPath, level);
-            if (result) results.push();
+            results.push(result);
           }
         }
 
@@ -228,19 +201,6 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
      */
     const getSoul = (soulName: string, level: number = 2) => {
       return Effect.gen(function* () {
-        // Cache lookup with normalized key
-        const currentCache = yield* Ref.get(cache);
-        const entry = currentCache.get(soulName);
-        if (entry) {
-          if (entry.cachedLevel >= level) {
-            return filterByLevel(entry.manifest, level);
-          }
-
-          // Insufficient level
-          return yield* loadSoul(soulName, entry.soulPath, level);
-        }
-
-        // Cache miss
         const soulPath = yield* resolveSoulPath(soulName);
         return yield* loadSoul(soulName, soulPath, level);
       });
@@ -255,7 +215,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         const currentCache = Ref.get(cache);
 
         // Cache miss
-        if ((yield* currentCache).values.length === 0) {
+        if (Array.from((yield* currentCache).values()).length === 0) {
           yield* loadAllSouls();
         }
 

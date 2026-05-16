@@ -112,8 +112,21 @@ export interface Actuator {
   readonly resolution?: string;
 }
 
+export interface WritableSoulManifestProps {
+  // These are loaded from disk at runtime — not in the manifest JSON
+  soul_content?: string;
+  identity_content?: string;
+  agents_content?: string;
+  style_content?: string;
+  heartbeat_content?: string;
+  user_template_content?: string;
+  examples_good_content?: string;
+  examples_bad_content?: string;
+  avatar_path?: string;
+}
+
 /** Main SoulSpec manifest — 30+ fields aggregating all interfaces above */
-export interface SoulManifest {
+export interface SoulManifest extends WritableSoulManifestProps {
   readonly spec_version: string;
   readonly name: string;
   readonly display_name: string;
@@ -138,17 +151,6 @@ export interface SoulManifest {
   readonly safety?: Safety;
   readonly sensors: Sensor[];
   readonly actuators: Actuator[];
-
-  // These are loaded from disk at runtime — not in the manifest JSON
-  soul_content?: string;
-  identity_content?: string;
-  agents_content?: string;
-  style_content?: string;
-  heartbeat_content?: string;
-  user_template_content?: string;
-  examples_good_content?: string;
-  examples_bad_content?: string;
-  avatar_path?: string;
 }
 
 /** Persisted active soul entry */
