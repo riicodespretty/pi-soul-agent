@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import { FileSystem } from "@effect/platform";
 import { SystemError } from "@effect/platform/Error";
 import { SoulSpecLoader } from "@/src/loader";
+import { parseManifest } from "@/src/services/soul-fs";
 import type { SoulManifest } from "@/src/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -36,70 +37,37 @@ const SECOND_PATH = `${HOME}/.openclaw/souls/clawsouls`;
 const REL_PATH_1 = ".pi/souls";
 const REL_PATH_2 = "./souls";
 
-/**
- * Convert snake_case SoulManifest fields to camelCase keys for soul.json.
- * This is what parseManifest reads from disk — it expects camelCase JSON.
- */
-function toCamelCaseJson(manifest: SoulManifest): Record<string, unknown> {
-  return {
-    specVersion: manifest.spec_version,
-    name: manifest.name,
-    displayName: manifest.display_name,
-    version: manifest.version,
-    description: manifest.description,
-    author: manifest.author,
-    license: manifest.license,
-    tags: manifest.tags,
-    category: manifest.category,
-    compatibility: manifest.compatibility,
-    allowedTools: manifest.allowed_tools,
-    recommendedSkills: manifest.recommended_skills,
-    files: manifest.files,
-    examples: manifest.examples,
-    deprecated: manifest.deprecated,
-    supersededBy: manifest.superseded_by,
-    repository: manifest.repository,
-    environment: manifest.environment,
-    interactionMode: manifest.interaction_mode,
-  };
-}
+// ── Source of truth: camelCase JSON (what a real soul.json looks like) ──────
 
-/**
- * Default mock soul manifest (snake_case TS type fields).
- * Kept for backward compatibility — existing tests may reference it.
- *
- * NOTE: JSON.stringify(this) produces snake_case keys which does NOT
- * round-trip correctly through parseManifest. Use DEFAULT_MANIFEST_JSON
- * or explicit camelCase JSON for new test code.
- */
-export const MOCK_SOUL_MANIFEST: SoulManifest = {
+const DEFAULT_SOURCE = {
+  specVersion: "0.5",
   name: "bodhisattva-coder",
-  display_name: "Bodhisattva Coder",
+  displayName: "Bodhisattva Coder",
   version: "1.0.0",
-  spec_version: "0.5",
   description: "A test bodhisattva coder soul",
   author: { name: "Test Author" },
   license: "MIT",
   tags: ["coder", "bodhisattva"],
   category: "general",
   compatibility: { models: [], frameworks: [] },
-  allowed_tools: [],
-  recommended_skills: [],
+  allowedTools: [],
+  recommendedSkills: [],
   files: { soul: "SOUL.md" },
   deprecated: false,
   environment: "virtual",
-  interaction_mode: "text",
-  sensors: [],
-  actuators: [],
-  soul_content: "# Bodhisattva Coder\n\nA coding assistant with bodhisattva vows.",
-  identity_content: "You are Bodhisattva Coder, a helpful AI assistant.",
+  interactionMode: "text",
 };
 
+/** camelCase JSON for soul.json — directly serializable (what parseManifest expects). */
+export const DEFAULT_MANIFEST_JSON = JSON.stringify(DEFAULT_SOURCE);
+
 /**
- * Default soul manifest as camelCase JSON, derived from MOCK_SOUL_MANIFEST.
- * This is what parseManifest actually expects from a real soul.json on disk.
+ * Derived SoulManifest via parseManifest.
+ * NOTE: content fields (soul_content, identity_content, etc.) are not included
+ * because parseManifest only parses the JSON manifest — loadSoul sets them
+ * at runtime by reading content files.
  */
-export const DEFAULT_MANIFEST_JSON = JSON.stringify(toCamelCaseJson(MOCK_SOUL_MANIFEST));
+export const MOCK_SOUL_MANIFEST: SoulManifest = parseManifest(DEFAULT_SOURCE);
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -114,7 +82,7 @@ const enoent = (method: string, path: string) =>
 
 function defaultManifestJson(name: string): string {
   return JSON.stringify({
-    ...toCamelCaseJson(MOCK_SOUL_MANIFEST),
+    ...DEFAULT_SOURCE,
     name,
     displayName: name,
     description: "A test soul",
@@ -174,7 +142,7 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
   const defs = souls ?? [
     {
       name: "bodhisattva-coder" as string,
-      files: { "SOUL.md": MOCK_SOUL_MANIFEST.soul_content ?? "" } as Record<string, string>,
+      files: { "SOUL.md": "" } as Record<string, string>,
     },
   ];
 
