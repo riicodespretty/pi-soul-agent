@@ -4,9 +4,69 @@ import { SystemError } from "@effect/platform/Error";
 import { SoulSpecLoader } from "@/src/loader";
 import type { SoulManifest } from "@/src/types";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 /**
- * Default mock soul manifest — matches SoulManifest type exactly.
- * Used as fixture data for mock FileSystem layers.
+ * Soul definition for building mock FS layers.
+ * The soul.json is generated with camelCase keys matching parseManifest expectations
+ * (e.g. `displayName` not `display_name`).
+ */
+export interface MockSoulDef {
+  /** Soul directory name (used as both directory name and manifest `name`) */
+  readonly name: string;
+  /** Explicit camelCase JSON for soul.json. Auto-generated from `name` if omitted. */
+  readonly manifestJson?: string;
+  /** Content files to create: filename → content string. */
+  readonly files?: Record<string, string>;
+  /** Search path to place this soul in (default: ~/.pi/agent/souls) */
+  readonly searchPath?: string;
+}
+
+// ── Defaults ──────────────────────────────────────────────────────────────────
+
+const HOME = "/Users/test";
+
+/** First search path (~/.pi/agent/souls) expanded with test HOME */
+export const FIRST_PATH = `${HOME}/.pi/agent/souls`;
+
+/** Second search path expanded */
+const SECOND_PATH = `${HOME}/.openclaw/souls/clawsouls`;
+
+/** Relative search paths (not tilde-prefixed — used as-is) */
+const REL_PATH_1 = ".pi/souls";
+const REL_PATH_2 = "./souls";
+
+/**
+ * Default soul manifest as camelCase JSON.
+ * This is what parseManifest actually expects from a real soul.json on disk.
+ * (The SoulManifest TS type uses snake_case internally after parsing.)
+ */
+export const DEFAULT_MANIFEST_JSON = JSON.stringify({
+  specVersion: "0.5",
+  name: "bodhisattva-coder",
+  displayName: "Bodhisattva Coder",
+  version: "1.0.0",
+  description: "A test bodhisattva coder soul",
+  author: { name: "Test Author" },
+  license: "MIT",
+  tags: ["coder", "bodhisattva"],
+  category: "general",
+  compatibility: { models: [], frameworks: [] },
+  allowedTools: [],
+  recommendedSkills: [],
+  files: { soul: "SOUL.md" },
+  deprecated: false,
+  environment: "virtual",
+  interactionMode: "text",
+});
+
+/**
+ * Default mock soul manifest (snake_case TS type fields).
+ * Kept for backward compatibility — existing tests may reference it.
+ *
+ * NOTE: JSON.stringify(this) produces snake_case keys which does NOT
+ * round-trip correctly through parseManifest. Use DEFAULT_MANIFEST_JSON
+ * or explicit camelCase JSON for new test code.
  */
 export const MOCK_SOUL_MANIFEST: SoulManifest = {
   name: "bodhisattva-coder",
@@ -31,80 +91,138 @@ export const MOCK_SOUL_MANIFEST: SoulManifest = {
   identity_content: "You are Bodhisattva Coder, a helpful AI assistant.",
 };
 
-/**
- * Create a fresh SoulSpecLoader layer (new cache per call).
- * Must be used inside each test's .pipe(Effect.provide(...)).
- */
-export const freshLoaderLayer = () => Layer.fresh(SoulSpecLoader.Default);
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+const enoent = (method: string, path: string) =>
+  new SystemError({
+    module: "FileSystem",
+    method,
+    reason: "NotFound",
+    description: "No such file or directory",
+    pathOrDescriptor: path,
+  });
+
+function defaultManifestJson(name: string): string {
+  return JSON.stringify({
+    specVersion: "0.5",
+    name,
+    displayName: name,
+    version: "1.0.0",
+    description: "A test soul",
+    author: { name: "Test Author" },
+    license: "MIT",
+    tags: [],
+    category: "general",
+    compatibility: { models: [], frameworks: [] },
+    allowedTools: [],
+    recommendedSkills: [],
+    files: { soul: "SOUL.md" },
+    deprecated: false,
+    environment: "virtual",
+    interactionMode: "text",
+  });
+}
 
 /**
- * Known file paths in the mock filesystem.
- * Uses exact Set<string> matching — NO `path.includes()` false positives.
+ * Standard directory skeleton for all 4 search paths + parent chains.
+ * Every mock starts from this base so expandHome and loadAllSouls iteration
+ * do not crash on missing directories.
  */
-const MOCK_PATHS = new Set([
-  // soul in search path 1 (~/.pi/agent/souls)
-  "/Users/test/.pi/agent/souls/bodhisattva-coder",
-  "/Users/test/.pi/agent/souls/bodhisattva-coder/soul.json",
-  "/Users/test/.pi/agent/souls/bodhisattva-coder/SOUL.md",
-]);
-
-/** Directories that exist and their contents */
-const MOCK_DIRS: Record<string, string[]> = {
-  "/Users/test/.pi/agent/souls": ["bodhisattva-coder"],
-  "/Users/test/.pi/agent": ["souls"],
-  "/Users/test/.pi": ["agent"],
-  "/Users/test": [".pi"],
-  "/Users/test/.openclaw/souls/clawsouls": [],
-  "/Users/test/.openclaw/souls": ["clawsouls"],
-  "/Users/test/.openclaw": ["souls"],
-  ".pi/souls": [],
-  ".pi": ["souls"],
-  "./souls": [],
+const BASE_DIRS: Record<string, string[]> = {
+  // First search path: ~/.pi/agent/souls
+  [FIRST_PATH]: [],
+  [`${HOME}/.pi/agent`]: ["souls"],
+  [`${HOME}/.pi`]: ["agent"],
+  [HOME]: [".pi"],
+  // Second search path: ~/.openclaw/souls/clawsouls
+  [SECOND_PATH]: [],
+  [`${HOME}/.openclaw/souls`]: ["clawsouls"],
+  [`${HOME}/.openclaw`]: ["souls"],
+  // Relative paths
+  [REL_PATH_1]: [],
+  [".pi"]: ["souls"],
+  [REL_PATH_2]: [],
 };
 
-/** All known directory paths for exists() lookups */
-const DIR_PATHS = new Set(Object.keys(MOCK_DIRS));
+// ── Mock builder ──────────────────────────────────────────────────────────────
 
 /**
- * Create a mock FileSystem layer using FileSystem.layerNoop.
- * Uses exact Set<string> path matching — no `path.includes()` false positives.
+ * Build a mock FileSystem.layerNoop from the given soul definitions.
  *
- * @param manifestOverride - Optional partial override for the default manifest
- * @param extraPaths - Additional file paths to mark as existing
+ * Every mock starts with a complete directory skeleton for all 4 search paths.
+ * Each soul gets:
+ *   - An entry in its parent search path's directory listing
+ *   - Its own directory (for listing & exists checks)
+ *   - A `soul.json` file (auto-generated or explicit)
+ *   - Any content files declared via `.files`
+ *
+ * @example
+ * ```ts
+ * createMockFsLayer([{ name: "my-soul", files: { "SOUL.md": "# Hello" } }])
+ * ```
  */
-export const createMockFsLayer = (
-  manifestOverride?: Partial<SoulManifest>,
-  extraPaths?: string[],
-) => {
-  const manifest = { ...MOCK_SOUL_MANIFEST, ...manifestOverride };
-  const manifestJson = JSON.stringify(manifest);
-  const allPaths = new Set(MOCK_PATHS);
-  if (extraPaths) extraPaths.forEach((p) => allPaths.add(p));
+export function createMockFsLayer(souls?: MockSoulDef[]) {
+  // Deep-clone BASE_DIRS so multiple calls don't share state
+  const dirs: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(BASE_DIRS)) {
+    dirs[k] = [...v];
+  }
 
-  const enoent = (method: string, path: string) =>
-    new SystemError({
-      module: "FileSystem",
-      method,
-      reason: "NotFound",
-      description: "No such file or directory",
-      pathOrDescriptor: path,
-    });
+  const fileContents: Record<string, string> = {};
+  const filePaths = new Set<string>();
+
+  // If souls arg is undefined (not empty array), use a default soul (backward compat)
+  const defs = souls ?? [
+    {
+      name: "bodhisattva-coder" as string,
+      files: { "SOUL.md": MOCK_SOUL_MANIFEST.soul_content ?? "" } as Record<string, string>,
+    },
+  ];
+
+  for (const soul of defs) {
+    const baseDir = soul.searchPath ?? FIRST_PATH;
+    const soulDir = `${baseDir}/${soul.name}`;
+
+    // Register in parent directory listing
+    if (!dirs[baseDir]) dirs[baseDir] = [];
+    dirs[baseDir].push(soul.name);
+
+    // Create soul directory entry (for exists + readDirectory)
+    if (!dirs[soulDir]) dirs[soulDir] = [];
+
+    // soul.json
+    const sjPath = `${soulDir}/soul.json`;
+    fileContents[sjPath] = soul.manifestJson ?? defaultManifestJson(soul.name);
+    filePaths.add(sjPath);
+
+    // Content files
+    for (const [filename, content] of Object.entries(soul.files ?? {})) {
+      const fp = `${soulDir}/${filename}`;
+      fileContents[fp] = content;
+      filePaths.add(fp);
+    }
+  }
+
+  const dirPathSet = new Set(Object.keys(dirs));
 
   return FileSystem.layerNoop({
-    exists: (path: string) => Effect.succeed(allPaths.has(path) || DIR_PATHS.has(path)),
+    exists: (path: string) => Effect.succeed(dirPathSet.has(path) || filePaths.has(path)),
     readFileString: (path: string) => {
-      if (path.endsWith("soul.json") && allPaths.has(path)) {
-        return Effect.succeed(manifestJson);
-      }
-      if (path.endsWith("SOUL.md") && allPaths.has(path)) {
-        return Effect.succeed(manifest.soul_content ?? "");
-      }
+      if (path in fileContents) return Effect.succeed(fileContents[path]);
       return Effect.fail(enoent("readFileString", path));
     },
     readDirectory: (path: string) => {
-      const contents = MOCK_DIRS[path];
-      if (contents) return Effect.succeed([...contents]);
+      const c = dirs[path];
+      if (c !== undefined) return Effect.succeed([...c]);
       return Effect.fail(enoent("readDirectory", path));
     },
   });
-};
+}
+
+// ── Legacy helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Create a fresh SoulSpecLoader layer (new cache per call).
+ * @deprecated Use `Layer.fresh(SoulSpecLoader.Default)` directly.
+ */
+export const freshLoaderLayer = () => Layer.fresh(SoulSpecLoader.Default);
