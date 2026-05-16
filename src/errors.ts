@@ -17,11 +17,15 @@ export class NoSoulsFoundError extends Data.TaggedError("NoSoulsFoundError")<{
 /** Failed to parse a soul.json manifest */
 export class ManifestParseError extends Data.TaggedError("ManifestParseError")<{
   readonly message: string;
+  readonly path?: string;
+  readonly cause?: unknown;
 }> {}
 
 /** Generic filesystem operation failure */
 export class FileSystemError extends Data.TaggedError("FileSystemError")<{
   readonly message: string;
+  readonly path?: string;
+  readonly cause?: unknown;
 }> {}
 
 // ── Consumer-Facing Error ─────────────────────────────────────────────────────

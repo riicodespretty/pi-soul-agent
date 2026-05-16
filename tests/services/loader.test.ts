@@ -39,7 +39,7 @@ const permDenied = (method: string, path: string) =>
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("SoulSpecLoader", () => {
-  // Test 1: getSoul auto-loads on cache miss (no 2-step dance)
+  // getSoul auto-loads on cache miss (no 2-step dance)
   it.effect("getSoul auto-loads when soul not in cache", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -55,8 +55,8 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 2: cache never downgrades
-  it.effect("loadSoul does not downgrade cache level", () =>
+  // cache never downgrades
+  it.effect("getSoul does not downgrade cache level", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       yield* loader.getSoul(DEFAULT_SOURCE.name, 3);
@@ -70,8 +70,8 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 4: loadSoul at level 1 returns metadata only
-  it.effect("loadSoul at level 1 returns metadata-only manifest", () =>
+  // getSoul at level 1 returns metadata only
+  it.effect("getSoul at level 1 returns metadata-only manifest", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul(DEFAULT_SOURCE.name, 1);
@@ -84,7 +84,7 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 5: loadAllSouls returns array of manifests
+  // loadAllSouls returns array of manifests
   it.effect("loadAllSouls returns array of soul manifests", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -99,8 +99,8 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 7: error contract — SoulLoadError has ._tag === "SoulLoadError"
-  it.effect("loadSoul produces SoulLoadError on missing soul", () =>
+  // error contract — SoulLoadError has ._tag === "SoulLoadError"
+  it.effect("getSoul produces SoulLoadError on missing soul", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const result = yield* Effect.flip(loader.getSoul("definitely-not-exist-12345"));
@@ -113,8 +113,8 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 8: Cache key normalization — round trip via getSoul after loadSoul
-  it.effect("getSoul finds cached entry via normalized key", () =>
+  // basic getSoul smoke test
+  it.effect("getSoul returns a result for a known soul", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul(DEFAULT_SOURCE.name, 1);
@@ -128,8 +128,8 @@ describe("SoulSpecLoader", () => {
 
   // ── Error Path Coverage ─────────────────────────────────────────────────
 
-  // Test 9: ManifestParseError — invalid JSON produces SoulLoadError
-  it.effect("loadSoul produces SoulLoadError on malformed JSON", () =>
+  // ManifestParseError — invalid JSON produces SoulLoadError
+  it.effect("getSoul produces SoulLoadError on malformed JSON", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const result = yield* Effect.flip(loader.getSoul("corrupt-soul", 1));
@@ -162,7 +162,7 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 10: NoSoulsFoundError — empty directory produces SoulLoadError
+  // NoSoulsFoundError — empty directory produces SoulLoadError
   it.effect("loadAllSouls fails with SoulLoadError on empty directory", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -181,8 +181,8 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 11: FileSystemError — permission denied produces SoulLoadError
-  it.effect("loadSoul surfaces FileSystemError as SoulLoadError", () =>
+  // FileSystemError — permission denied produces SoulLoadError
+  it.effect("getSoul surfaces FileSystemError as SoulLoadError", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const result = yield* Effect.flip(loader.getSoul("unreadable-soul", 1));
@@ -213,8 +213,8 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 12: getSoul at level 2 keeps soulContent, removes agentsContent
-  it("getSoul at level 1 strips content fields", () =>
+  // Test 12: getSoul at level 1 strips all content fields
+  it.effect("getSoul at level 1 strips content fields", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const result = yield* loader.getSoul(DEFAULT_SOURCE.name, 1);
@@ -230,13 +230,14 @@ describe("SoulSpecLoader", () => {
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer()),
       Effect.provide(NodePathLayer),
-    ));
+    ),
+  );
 
-  // Test 12: getSoul at level 2 keeps soulContent, removes agentsContent
-  it("getSoul at level 2 strips only level-3 fields", () =>
+  // Test 12: getSoul at level 2 strips only level-3 fields
+  it.effect("getSoul at level 2 strips only level-3 fields", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const result = yield* loader.getSoul(DEFAULT_SOURCE.name, 1);
+      const result = yield* loader.getSoul(DEFAULT_SOURCE.name, 2);
       expect(result.soulContent).toBeDefined();
       expect(result.identityContent).toBeDefined();
       expect(result.agentsContent).toBeUndefined();
@@ -248,7 +249,8 @@ describe("SoulSpecLoader", () => {
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer()),
       Effect.provide(NodePathLayer),
-    ));
+    ),
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -412,7 +414,7 @@ describe("Adversarial — loadAllSouls contract", () => {
     ),
   );
 
-  it.effect("loadAllSouls returns empty-array-ish SoulLoadError when no souls found", () =>
+  it.effect("loadAllSouls fails with SoulLoadError when no souls found", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const err = yield* Effect.flip(loader.loadAllSouls(1));
@@ -526,8 +528,8 @@ describe("Adversarial — multiple souls", () => {
       const loader = yield* SoulSpecLoader;
       const souls = yield* loader.loadAllSouls(1);
       expect(souls.length).toBe(3);
-      const names = souls.map((s) => s.name).sort();
-      expect(names).toEqual(["alpha", "beta", "gamma"]);
+      const names = souls.map((s) => s.name);
+      expect(names).toEqual(["beta", "alpha", "gamma"]);
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer([{ name: "beta" }, { name: "alpha" }, { name: "gamma" }])),
@@ -586,7 +588,7 @@ describe("Adversarial — listSouls", () => {
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const names = yield* loader.listSouls();
-      expect(names.length).toBeGreaterThan(0);
+      expect(names).toEqual(["a", "b"]);
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer([{ name: "a" }, { name: "b" }])),

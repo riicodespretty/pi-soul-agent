@@ -154,7 +154,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
           return new Map(m).set(soulName, { manifest, soulPath, cachedLevel: level });
         });
 
-        return manifest;
+        return filterByLevel(manifest, level);
       }).pipe(Effect.catchAll((e) => Effect.fail(soulLoadError(e.message, e.cause))));
     };
 
@@ -190,7 +190,13 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         }
 
         return results;
-      }).pipe(Effect.catchAll((e) => Effect.fail(soulLoadError(e.message, e.cause))));
+      }).pipe(
+        Effect.catchAll((e) => {
+          // Passthrough already-wrapped SoulLoadError (from loadSoul)
+          if (e instanceof SoulLoadError) return Effect.fail(e);
+          return Effect.fail(soulLoadError(e.message, e.cause));
+        }),
+      );
     };
 
     /**
@@ -203,7 +209,13 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       return Effect.gen(function* () {
         const soulPath = yield* resolveSoulPath(soulName);
         return yield* loadSoul(soulName, soulPath, level);
-      }).pipe(Effect.catchAll((e) => Effect.fail(soulLoadError(e.message, e.cause))));
+      }).pipe(
+        Effect.catchAll((e) => {
+          // Passthrough already-wrapped SoulLoadError (from loadSoul)
+          if (e instanceof SoulLoadError) return Effect.fail(e);
+          return Effect.fail(soulLoadError(e.message, e.cause));
+        }),
+      );
     };
 
     /**
