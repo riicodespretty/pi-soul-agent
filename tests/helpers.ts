@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { FileSystem } from "@effect/platform";
 import { SystemError } from "@effect/platform/Error";
-import { SoulSpecLoader } from "@/src/loader";
+import { SoulSpecLoader, SOUL_SEARCH_PATHS } from "@/src/loader";
 import { parseManifest } from "@/src/services/soul-fs";
 import type { SoulManifest } from "@/src/types";
 
@@ -88,13 +88,12 @@ const enoent = (method: string, path: string) =>
  * ```
  */
 export function createMockFsLayer(souls?: MockSoulDef[]) {
-  // All 4 search paths
-  const dirs: Record<string, string[]> = {
-    [FIRST_PATH]: [],
-    [`${HOME}/.openclaw/souls/clawsouls`]: [],
-    ".pi/souls": [],
-    "./souls": [],
-  };
+  // Build directory skeleton from SOUL_SEARCH_PATHS
+  const dirs: Record<string, string[]> = {};
+  for (const p of SOUL_SEARCH_PATHS) {
+    const resolved = p.startsWith("~/") ? `${HOME}/${p.slice(2)}` : p;
+    dirs[resolved] = [];
+  }
 
   const fileContents: Record<string, string> = {};
   const filePaths = new Set<string>();

@@ -5,7 +5,7 @@ import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "@/src/error
 import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
 
 /** Soul search paths (with tilde — expanded at runtime) */
-const SOUL_SEARCH_PATHS = [
+export const SOUL_SEARCH_PATHS = [
   "~/.pi/agent/souls",
   "~/.openclaw/souls/clawsouls",
   ".pi/souls",
