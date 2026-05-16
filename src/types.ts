@@ -1,4 +1,4 @@
-import { ManagedRuntime } from "effect";
+import { ManagedRuntime, ParseResult, Schema as S } from "effect";
 
 // ── Enums as const objects (erasableSyntaxOnly: true forbids `enum`) ──
 
@@ -39,86 +39,235 @@ export type DeepPartial<T> = T extends (infer U)[]
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
 
-// ── Interfaces ──
+// ── Schema definitions (source of truth for all soul.json data types) ──
+// See: https://github.com/clawsouls/soulspec/blob/main/soul-spec-v0.5.md
 
-export interface Author {
-  readonly name: string;
-  readonly github?: string;
-  readonly email?: string;
-}
+export const AuthorSchema = S.Struct({
+  name: S.optionalWith(S.String, { default: () => "Unknown" }),
+  github: S.optionalWith(S.String, { exact: true }),
+  email: S.optionalWith(S.String, { exact: true }),
+});
+export type Author = S.Schema.Type<typeof AuthorSchema>;
 
-export interface RecommendedSkill {
-  readonly name: string;
-  readonly version?: string;
-  readonly required: boolean;
-}
+export const CompatibilitySchema = S.Struct({
+  openclaw: S.optionalWith(S.String, { exact: true }),
+  models: S.optionalWith(S.Array(S.String), { default: () => [] }),
+  frameworks: S.optionalWith(S.Array(S.String), { default: () => [] }),
+  minTokenContext: S.optionalWith(S.Number, { exact: true }),
+});
+export type Compatibility = S.Schema.Type<typeof CompatibilitySchema>;
 
-export interface Compatibility {
-  readonly openclaw?: string;
-  readonly models: string[];
-  readonly frameworks: string[];
-  readonly minTokenContext?: number;
-}
+export const SoulFilesSchema = S.Struct({
+  soul: S.optionalWith(S.String, { default: () => "SOUL.md" }),
+  identity: S.optionalWith(S.String, { exact: true }),
+  agents: S.optionalWith(S.String, { exact: true }),
+  heartbeat: S.optionalWith(S.String, { exact: true }),
+  style: S.optionalWith(S.String, { exact: true }),
+  userTemplate: S.optionalWith(S.String, { exact: true }),
+  avatar: S.optionalWith(S.String, { exact: true }),
+});
+export type SoulFiles = S.Schema.Type<typeof SoulFilesSchema>;
 
-export interface SoulFiles {
-  readonly soul: string;
-  readonly identity?: string;
-  readonly agents?: string;
-  readonly heartbeat?: string;
-  readonly style?: string;
-  readonly userTemplate?: string;
-  readonly avatar?: string;
-}
+export const SoulExamplesSchema = S.Struct({
+  good: S.optionalWith(S.String, { exact: true }),
+  bad: S.optionalWith(S.String, { exact: true }),
+});
+export type SoulExamples = S.Schema.Type<typeof SoulExamplesSchema>;
 
-export interface SoulExamples {
-  readonly good?: string;
-  readonly bad?: string;
-}
+export const DisclosureSchema = S.Struct({
+  summary: S.optionalWith(S.String, { exact: true }),
+});
+export type Disclosure = S.Schema.Type<typeof DisclosureSchema>;
 
-export interface Disclosure {
-  readonly summary?: string;
-}
+export const PhysicalSafetySchema = S.Struct({
+  contactPolicy: S.optionalWith(S.Enums(ContactPolicy), {
+    default: () => ContactPolicy.NO_CONTACT,
+  }),
+  emergencyProtocol: S.optionalWith(S.String, { default: () => "stop" }),
+  operatingZone: S.optionalWith(S.String, { default: () => "indoor" }),
+  maxSpeed: S.optionalWith(S.String, { exact: true }),
+});
+export type PhysicalSafety = S.Schema.Type<typeof PhysicalSafetySchema>;
 
-export interface HardwareConstraints {
-  readonly hasDisplay: boolean;
-  readonly hasSpeaker: boolean;
-  readonly hasMicrophone: boolean;
-  readonly hasCamera: boolean;
-  readonly mobility: Mobility;
-  readonly manipulator: boolean;
-}
+export const HardwareConstraintsSchema = S.Struct({
+  hasDisplay: S.optionalWith(S.Boolean, { default: () => false }),
+  hasSpeaker: S.optionalWith(S.Boolean, { default: () => false }),
+  hasMicrophone: S.optionalWith(S.Boolean, { default: () => false }),
+  hasCamera: S.optionalWith(S.Boolean, { default: () => false }),
+  mobility: S.optionalWith(S.Enums(Mobility), {
+    default: () => Mobility.STATIONARY,
+  }),
+  manipulator: S.optionalWith(S.Boolean, { default: () => false }),
+});
+export type HardwareConstraints = S.Schema.Type<typeof HardwareConstraintsSchema>;
 
-export interface PhysicalSafety {
-  readonly contactPolicy: ContactPolicy;
-  readonly emergencyProtocol: string;
-  readonly operatingZone: string;
-  readonly maxSpeed?: string;
-}
+export const SafetySchema = S.Struct({
+  physical: S.optionalWith(PhysicalSafetySchema, { exact: true }),
+});
+export type Safety = S.Schema.Type<typeof SafetySchema>;
 
-export interface Safety {
-  readonly physical?: PhysicalSafety;
-}
+// ── Skills (with string→object normalization) ──
 
-export interface Sensor {
-  readonly name: string;
-  readonly type?: string;
-  readonly range?: string;
-  readonly fov?: number;
-  readonly resolution?: string;
-  readonly fps?: number;
-  readonly channels?: number;
-}
+const SkillEntryEncodedSchema = S.Union(
+  S.String,
+  S.Struct({
+    name: S.String,
+    version: S.optionalWith(S.String, { exact: true }),
+    required: S.optionalWith(S.Boolean, { exact: true }),
+  }),
+);
 
-export interface Actuator {
-  readonly name: string;
-  readonly type?: string;
-  readonly maxSpeed?: string;
-  readonly payload?: string;
-  readonly reach?: string;
-  readonly force?: string;
-  readonly dof?: number;
-  readonly resolution?: string;
-}
+const SkillEntryDecodedSchema = S.Struct({
+  name: S.String,
+  version: S.optionalWith(S.String, { exact: true }),
+  required: S.Boolean,
+});
+export type RecommendedSkill = S.Schema.Type<typeof SkillEntryDecodedSchema>;
+
+export const RecommendedSkillsSchema = S.transformOrFail(
+  S.Array(SkillEntryEncodedSchema),
+  S.Array(SkillEntryDecodedSchema),
+  {
+    decode: (entries) =>
+      ParseResult.succeed(
+        entries.map((e) =>
+          typeof e === "string"
+            ? { name: e, required: false }
+            : { name: e.name, version: e.version, required: e.required ?? false },
+        ),
+      ),
+    encode: ParseResult.succeed,
+  },
+);
+
+// ── Sensors (inject name from record key) ──
+
+const SensorEntryEncodedSchema = S.Union(
+  S.Boolean,
+  S.Struct({
+    type: S.optionalWith(S.String, { exact: true }),
+    range: S.optionalWith(S.String, { exact: true }),
+    fov: S.optionalWith(S.Number, { exact: true }),
+    resolution: S.optionalWith(S.String, { exact: true }),
+    fps: S.optionalWith(S.Number, { exact: true }),
+    channels: S.optionalWith(S.Number, { exact: true }),
+  }),
+);
+
+const SensorEntryDecodedSchema = S.Struct({
+  name: S.String,
+  type: S.optionalWith(S.String, { exact: true }),
+  range: S.optionalWith(S.String, { exact: true }),
+  fov: S.optionalWith(S.Number, { exact: true }),
+  resolution: S.optionalWith(S.String, { exact: true }),
+  fps: S.optionalWith(S.Number, { exact: true }),
+  channels: S.optionalWith(S.Number, { exact: true }),
+});
+export type Sensor = S.Schema.Type<typeof SensorEntryDecodedSchema>;
+
+export const SensorsSchema = S.transformOrFail(
+  S.Record({ key: S.String, value: SensorEntryEncodedSchema }),
+  S.Record({ key: S.String, value: SensorEntryDecodedSchema }),
+  {
+    decode: (encoded) =>
+      ParseResult.succeed(
+        Object.fromEntries(
+          Object.entries(encoded).map(([name, val]) => [
+            name,
+            typeof val === "boolean" ? { name } : { name, ...val },
+          ]),
+        ),
+      ),
+    encode: ParseResult.succeed,
+  },
+);
+
+// ── Actuators (inject name from record key) ──
+
+const ActuatorEntryEncodedSchema = S.Struct({
+  type: S.optionalWith(S.String, { exact: true }),
+  maxSpeed: S.optionalWith(S.String, { exact: true }),
+  payload: S.optionalWith(S.String, { exact: true }),
+  reach: S.optionalWith(S.String, { exact: true }),
+  force: S.optionalWith(S.String, { exact: true }),
+  dof: S.optionalWith(S.Number, { exact: true }),
+  resolution: S.optionalWith(S.String, { exact: true }),
+});
+
+const ActuatorEntryDecodedSchema = S.Struct({
+  name: S.String,
+  type: S.optionalWith(S.String, { exact: true }),
+  maxSpeed: S.optionalWith(S.String, { exact: true }),
+  payload: S.optionalWith(S.String, { exact: true }),
+  reach: S.optionalWith(S.String, { exact: true }),
+  force: S.optionalWith(S.String, { exact: true }),
+  dof: S.optionalWith(S.Number, { exact: true }),
+  resolution: S.optionalWith(S.String, { exact: true }),
+});
+export type Actuator = S.Schema.Type<typeof ActuatorEntryDecodedSchema>;
+
+export const ActuatorsSchema = S.transformOrFail(
+  S.Record({ key: S.String, value: ActuatorEntryEncodedSchema }),
+  S.Record({ key: S.String, value: ActuatorEntryDecodedSchema }),
+  {
+    decode: (encoded) =>
+      ParseResult.succeed(
+        Object.fromEntries(Object.entries(encoded).map(([name, val]) => [name, { name, ...val }])),
+      ),
+    encode: ParseResult.succeed,
+  },
+);
+
+// ── Main manifest schema ──
+
+export const SoulManifestDataSchema = S.Struct({
+  specVersion: S.optionalWith(S.String, { default: () => "0.5" }),
+  name: S.optionalWith(S.String, { default: () => "unknown" }),
+  displayName: S.optionalWith(S.String, { default: () => "Unknown" }),
+  version: S.optionalWith(S.String, { default: () => "1.0.0" }),
+  description: S.optionalWith(S.String, { default: () => "" }),
+  author: S.optionalWith(AuthorSchema, {
+    default: () => ({ name: "Unknown" }),
+  }),
+  license: S.optionalWith(S.String, { default: () => "MIT" }),
+  tags: S.optionalWith(S.Array(S.String), { default: () => [] }),
+  category: S.optionalWith(S.String, { default: () => "general" }),
+  compatibility: S.optionalWith(CompatibilitySchema, {
+    default: () => ({ models: [], frameworks: [] }),
+  }),
+  allowedTools: S.optionalWith(S.Array(S.String), { default: () => [] }),
+  files: S.optionalWith(SoulFilesSchema, {
+    default: () => ({ soul: "SOUL.md" }),
+  }),
+  examples: S.optionalWith(SoulExamplesSchema, { exact: true }),
+  disclosure: S.optionalWith(DisclosureSchema, { exact: true }),
+  deprecated: S.optionalWith(S.Boolean, { default: () => false }),
+  supersededBy: S.optionalWith(S.String, { exact: true }),
+  repository: S.optionalWith(S.String, { exact: true }),
+  environment: S.optionalWith(S.Enums(Environment), {
+    default: () => Environment.VIRTUAL,
+  }),
+  interactionMode: S.optionalWith(S.Enums(InteractionMode), {
+    default: () => InteractionMode.TEXT,
+  }),
+  hardwareConstraints: S.optionalWith(HardwareConstraintsSchema, {
+    exact: true,
+  }),
+  safety: S.optionalWith(
+    S.Struct({
+      physical: S.optionalWith(PhysicalSafetySchema, { exact: true }),
+    }),
+    { exact: true },
+  ),
+  sensors: S.optionalWith(SensorsSchema, { default: () => ({}) }),
+  actuators: S.optionalWith(ActuatorsSchema, { default: () => ({}) }),
+  recommendedSkills: S.optionalWith(RecommendedSkillsSchema, {
+    default: () => [],
+  }),
+});
+export type SoulManifestData = S.Schema.Type<typeof SoulManifestDataSchema>;
+
+// ── Composite types ──
 
 /** Fields loaded from disk at runtime (not present in soul.json on disk). */
 export interface WritableSoulManifestProps {
@@ -133,40 +282,8 @@ export interface WritableSoulManifestProps {
   avatarPath?: string;
 }
 
-/** On-disk fields present in soul.json. Used to type manifest overrides. */
-export type SoulManifestData = Omit<SoulManifest, keyof WritableSoulManifestProps>;
-
-/** Main SoulSpec manifest — 30+ fields aggregating all interfaces above */
-export interface SoulManifest extends WritableSoulManifestProps {
-  readonly specVersion: string;
-  readonly name: string;
-  readonly displayName: string;
-  readonly version: string;
-  readonly description: string;
-  readonly author: Author;
-  readonly license: string;
-  readonly tags: string[];
-  readonly category: string;
-  readonly compatibility: Compatibility;
-  readonly allowedTools: string[];
-  readonly recommendedSkills: RecommendedSkill[];
-  readonly files: SoulFiles;
-  readonly examples?: SoulExamples;
-  readonly disclosure?: Disclosure;
-  readonly deprecated: boolean;
-  readonly supersededBy?: string;
-  readonly repository?: string;
-  readonly environment: Environment;
-  readonly interactionMode: InteractionMode;
-  readonly hardwareConstraints?: HardwareConstraints;
-  readonly safety?: Safety;
-  readonly sensors: {
-    [key: string]: Sensor;
-  };
-  readonly actuators: {
-    [key: string]: Actuator;
-  };
-}
+/** Main SoulSpec manifest — on-disk fields from schema + runtime-loaded content. */
+export interface SoulManifest extends WritableSoulManifestProps, SoulManifestData {}
 
 /** Persisted active soul entry */
 export interface ActiveSoul {
