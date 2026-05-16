@@ -30,13 +30,6 @@ const HOME = "/Users/test";
 /** First search path (~/.pi/agent/souls) expanded with test HOME */
 export const FIRST_PATH = `${HOME}/.pi/agent/souls`;
 
-/** Second search path expanded */
-const SECOND_PATH = `${HOME}/.openclaw/souls/clawsouls`;
-
-/** Relative search paths (not tilde-prefixed — used as-is) */
-const REL_PATH_1 = ".pi/souls";
-const REL_PATH_2 = "./souls";
-
 // ── Source of truth: camelCase JSON (what a real soul.json looks like) ──────
 
 const DEFAULT_SOURCE = {
@@ -58,9 +51,6 @@ const DEFAULT_SOURCE = {
   interactionMode: "text",
 };
 
-/** camelCase JSON for soul.json — directly serializable (what parseManifest expects). */
-export const DEFAULT_MANIFEST_JSON = JSON.stringify(DEFAULT_SOURCE);
-
 /**
  * Derived SoulManifest via parseManifest.
  * NOTE: content fields (soul_content, identity_content, etc.) are not included
@@ -80,43 +70,12 @@ const enoent = (method: string, path: string) =>
     pathOrDescriptor: path,
   });
 
-function defaultManifestJson(name: string): string {
-  return JSON.stringify({
-    ...DEFAULT_SOURCE,
-    name,
-    displayName: name,
-    description: "A test soul",
-    tags: [],
-  });
-}
-
-/**
- * Standard directory skeleton for all 4 search paths + parent chains.
- * Every mock starts from this base so expandHome and loadAllSouls iteration
- * do not crash on missing directories.
- */
-const BASE_DIRS: Record<string, string[]> = {
-  // First search path: ~/.pi/agent/souls
-  [FIRST_PATH]: [],
-  [`${HOME}/.pi/agent`]: ["souls"],
-  [`${HOME}/.pi`]: ["agent"],
-  [HOME]: [".pi"],
-  // Second search path: ~/.openclaw/souls/clawsouls
-  [SECOND_PATH]: [],
-  [`${HOME}/.openclaw/souls`]: ["clawsouls"],
-  [`${HOME}/.openclaw`]: ["souls"],
-  // Relative paths
-  [REL_PATH_1]: [],
-  [".pi"]: ["souls"],
-  [REL_PATH_2]: [],
-};
-
 // ── Mock builder ──────────────────────────────────────────────────────────────
 
 /**
  * Build a mock FileSystem.layerNoop from the given soul definitions.
  *
- * Every mock starts with a complete directory skeleton for all 4 search paths.
+ * Every mock starts with a directory skeleton for all 4 search paths.
  * Each soul gets:
  *   - An entry in its parent search path's directory listing
  *   - Its own directory (for listing & exists checks)
@@ -129,11 +88,13 @@ const BASE_DIRS: Record<string, string[]> = {
  * ```
  */
 export function createMockFsLayer(souls?: MockSoulDef[]) {
-  // Deep-clone BASE_DIRS so multiple calls don't share state
-  const dirs: Record<string, string[]> = {};
-  for (const [k, v] of Object.entries(BASE_DIRS)) {
-    dirs[k] = [...v];
-  }
+  // All 4 search paths
+  const dirs: Record<string, string[]> = {
+    [FIRST_PATH]: [],
+    [`${HOME}/.openclaw/souls/clawsouls`]: [],
+    ".pi/souls": [],
+    "./souls": [],
+  };
 
   const fileContents: Record<string, string> = {};
   const filePaths = new Set<string>();
@@ -159,7 +120,15 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
 
     // soul.json
     const sjPath = `${soulDir}/soul.json`;
-    fileContents[sjPath] = soul.manifestJson ?? defaultManifestJson(soul.name);
+    fileContents[sjPath] =
+      soul.manifestJson ??
+      JSON.stringify({
+        ...DEFAULT_SOURCE,
+        name: soul.name,
+        displayName: soul.name,
+        description: "A test soul",
+        tags: [],
+      });
     filePaths.add(sjPath);
 
     // Content files
