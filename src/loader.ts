@@ -176,8 +176,8 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
             if (seen.has(soulName)) continue;
             seen.add(soulName);
 
-            const soulPath = `${resolvedBase}/${soulName}/soul.json`;
-            const exists = yield* fs.exists(soulPath);
+            const soulPath = `${resolvedBase}/${soulName}`;
+            const exists = yield* fs.exists(`${soulPath}/soul.json`);
             if (!exists) continue;
 
             const result = yield* loadSoul(soulName, soulPath, level);
@@ -203,7 +203,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       return Effect.gen(function* () {
         const soulPath = yield* resolveSoulPath(soulName);
         return yield* loadSoul(soulName, soulPath, level);
-      });
+      }).pipe(Effect.catchAll((e) => Effect.fail(soulLoadError(e.message, e.cause))));
     };
 
     /**

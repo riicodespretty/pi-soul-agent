@@ -54,6 +54,12 @@ const MOCK_DIRS: Record<string, string[]> = {
   "/Users/test/.pi/agent": ["souls"],
   "/Users/test/.pi": ["agent"],
   "/Users/test": [".pi"],
+  "/Users/test/.openclaw/souls/clawsouls": [],
+  "/Users/test/.openclaw/souls": ["clawsouls"],
+  "/Users/test/.openclaw": ["souls"],
+  ".pi/souls": [],
+  ".pi": ["souls"],
+  "./souls": [],
 };
 
 /** All known directory paths for exists() lookups */

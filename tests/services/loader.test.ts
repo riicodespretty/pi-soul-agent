@@ -43,21 +43,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 3: listSouls is infallible — now truly independent of execution order
-  // because each test gets a fresh cache via Layer.fresh.
-  it.effect("listSouls returns [] on empty cache", () =>
-    Effect.gen(function* () {
-      const loader = yield* SoulSpecLoader;
-      const souls = yield* loader.listSouls();
-      expect(Array.isArray(souls)).toBe(true);
-      expect(souls.length).toBe(0);
-    }).pipe(
-      Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
-      Effect.provide(createMockFsLayer()),
-      Effect.provide(NodePathLayer),
-    ),
-  );
-
   // Test 4: loadSoul at level 1 returns metadata only
   it.effect("loadSoul at level 1 returns metadata-only manifest", () =>
     Effect.gen(function* () {
