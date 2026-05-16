@@ -2,34 +2,38 @@ import { ManagedRuntime, ParseResult, Schema as S } from "effect";
 
 // ── Enums as const objects (erasableSyntaxOnly: true forbids `enum`) ──
 
-export const Environment = {
+export const EnvironmentSchema = S.Enums({
   VIRTUAL: "virtual",
   EMBODIED: "embodied",
   HYBRID: "hybrid",
-} as const;
-export type Environment = (typeof Environment)[keyof typeof Environment];
+} as const);
+export const Environment = EnvironmentSchema.enums;
+export type Environment = S.Schema.Type<typeof EnvironmentSchema>;
 
-export const InteractionMode = {
+export const InteractionModeSchema = S.Enums({
   TEXT: "text",
   VOICE: "voice",
   MULTIMODAL: "multimodal",
   GESTURE: "gesture",
-} as const;
-export type InteractionMode = (typeof InteractionMode)[keyof typeof InteractionMode];
+} as const);
+export const InteractionMode = InteractionModeSchema.enums;
+export type InteractionMode = S.Schema.Type<typeof InteractionModeSchema>;
 
-export const ContactPolicy = {
+export const ContactPolicySchema = S.Enums({
   NO_CONTACT: "no-contact",
   GENTLE_CONTACT: "gentle-contact",
   FULL_CONTACT: "full-contact",
-} as const;
-export type ContactPolicy = (typeof ContactPolicy)[keyof typeof ContactPolicy];
+} as const);
+export const ContactPolicy = ContactPolicySchema.enums;
+export type ContactPolicy = S.Schema.Type<typeof ContactPolicySchema>;
 
-export const Mobility = {
+export const MobilitySchema = S.Enums({
   STATIONARY: "stationary",
   MOBILE: "mobile",
   LIMITED: "limited",
-} as const;
-export type Mobility = (typeof Mobility)[keyof typeof Mobility];
+} as const);
+export const Mobility = MobilitySchema.enums;
+export type Mobility = S.Schema.Type<typeof MobilitySchema>;
 
 // ── Utility ──
 
@@ -80,7 +84,7 @@ export const DisclosureSchema = S.Struct({
 export type Disclosure = S.Schema.Type<typeof DisclosureSchema>;
 
 export const PhysicalSafetySchema = S.Struct({
-  contactPolicy: S.optionalWith(S.Enums(ContactPolicy), {
+  contactPolicy: S.optionalWith(ContactPolicySchema, {
     default: () => ContactPolicy.NO_CONTACT,
   }),
   emergencyProtocol: S.optionalWith(S.String, { default: () => "stop" }),
@@ -94,7 +98,7 @@ export const HardwareConstraintsSchema = S.Struct({
   hasSpeaker: S.optionalWith(S.Boolean, { default: () => false }),
   hasMicrophone: S.optionalWith(S.Boolean, { default: () => false }),
   hasCamera: S.optionalWith(S.Boolean, { default: () => false }),
-  mobility: S.optionalWith(S.Enums(Mobility), {
+  mobility: S.optionalWith(MobilitySchema, {
     default: () => Mobility.STATIONARY,
   }),
   manipulator: S.optionalWith(S.Boolean, { default: () => false }),
@@ -244,10 +248,10 @@ export const SoulManifestDataSchema = S.Struct({
   deprecated: S.optionalWith(S.Boolean, { default: () => false }),
   supersededBy: S.optionalWith(S.String, { exact: true }),
   repository: S.optionalWith(S.String, { exact: true }),
-  environment: S.optionalWith(S.Enums(Environment), {
+  environment: S.optionalWith(EnvironmentSchema, {
     default: () => Environment.VIRTUAL,
   }),
-  interactionMode: S.optionalWith(S.Enums(InteractionMode), {
+  interactionMode: S.optionalWith(InteractionModeSchema, {
     default: () => InteractionMode.TEXT,
   }),
   hardwareConstraints: S.optionalWith(HardwareConstraintsSchema, {
