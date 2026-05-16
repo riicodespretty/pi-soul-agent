@@ -10,19 +10,13 @@ import type { DeepPartial, SoulManifest, SoulManifestData } from "@/src/types";
 
 /**
  * Soul definition for building mock FS layers.
- *
- * The `manifest` captures everything.
- * Content files referenced in `manifest.files` and `manifest.examples`
- * are auto-created with empty content. Use `fileContents` to override.
+ * Any field from SoulManifestData can be provided; the rest get defaults.
+ * Content files referenced in `files` are auto-created with empty content.
  */
-export interface MockSoulDef {
-  /** Partial manifest to merge with auto-generated defaults. */
-  readonly manifest?: DeepPartial<SoulManifestData>;
-  /** Content overrides for mock FS files: filename → content string. */
-  readonly fileContents?: Record<string, string>;
+export type MockSoulDef = DeepPartial<SoulManifestData> & {
   /** Search path to place this soul in (default: ~/.pi/agent/souls) */
   readonly soulPath?: string;
-}
+};
 
 // ── Source of truth: typed default manifest — matches what a real soul.json looks like ──
 
@@ -80,7 +74,7 @@ const enoent = (method: string, path: string) =>
  *
  * @example
  * ```ts
- * createMockFsLayer([{ manifest: { name: "my-soul", files: { soul: "SOUL.md" } } }])
+ * createMockFsLayer([{ name: "my-soul", files: { soul: "SOUL.md" } }])
  * ```
  */
 export function createMockFsLayer(souls?: MockSoulDef[]) {
@@ -94,18 +88,16 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
   // 2. File contents (soul.json + content files) for each soul
   const fileSystem: Record<string, string> = {};
 
-  const defaultDef = (): MockSoulDef => ({
-    manifest: { name: "bodhisattva-coder" },
-  });
-  const defs = souls ?? [defaultDef()];
+  const defs = souls ?? [{} as MockSoulDef];
   for (const soul of defs) {
+    const { soulPath, ...manifestFields } = soul;
     const merged = {
       ...DEFAULT_SOURCE,
-      ...soul.manifest,
-      name: soul.manifest?.name ?? DEFAULT_SOURCE.name,
+      ...manifestFields,
+      name: manifestFields.name ?? DEFAULT_SOURCE.name,
     };
     const soulName = merged.name;
-    const baseDir = soul.soulPath ?? expand(SOUL_SEARCH_PATHS[0]);
+    const baseDir = soulPath ?? expand(SOUL_SEARCH_PATHS[0]);
     const soulDir = `${baseDir}/${soulName}`;
 
     mkdir(baseDir).push(soulName);
@@ -114,9 +106,18 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
     // Write soul.json
     fileSystem[`${soulDir}/soul.json`] = JSON.stringify(merged);
 
-    // Write explicitly provided content files only
-    for (const [fp, content] of Object.entries(soul.fileContents ?? {})) {
-      fileSystem[`${soulDir}/${fp}`] = content;
+    // Auto-create content files from manifest.files entries (empty content)
+    const mf = merged.files;
+    if (mf) {
+      for (const key of ["soul", "identity", "agents", "heartbeat", "style", "userTemplate", "avatar"] as const) {
+        const path = mf[key as keyof typeof mf];
+        if (path) fileSystem[`${soulDir}/${path}`] = "";
+      }
+    }
+    const examples = merged.examples;
+    if (examples) {
+      if (examples.good) fileSystem[`${soulDir}/${examples.good}`] = "";
+      if (examples.bad) fileSystem[`${soulDir}/${examples.bad}`] = "";
     }
   }
 
