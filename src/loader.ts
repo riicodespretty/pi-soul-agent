@@ -28,6 +28,14 @@ function getErrorMessage(error: unknown): string {
 }
 
 /**
+ * Create a SoulLoadError with message and optional cause.
+ * Shorthand for `new SoulLoadError({ message, ...(cause ? { cause } : {}) })`.
+ */
+function soulLoadError(message: string, cause?: unknown): SoulLoadError {
+  return new SoulLoadError({ message, ...(cause !== undefined ? { cause } : {}) });
+}
+
+/**
  * Filter a manifest to only include content fields up to the requested level.
  * Level 1: metadata only (no content fields)
  * Level 2: soul_content + identity_content
@@ -226,52 +234,41 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
               }),
             ),
           NoSoulsFoundError: (_e) =>
-            Effect.fail(
-              new SoulLoadError({
-                message: `No souls found in any search path.`,
-              }),
-            ),
+            Effect.fail(soulLoadError("No souls found in any search path.")),
           ManifestParseError: (e) =>
             Effect.fail(
-              new SoulLoadError({
-                message: `Error parsing soul manifest: ${getErrorMessage(e.cause)}`,
-                cause: e.cause,
-              }),
+              soulLoadError(`Error parsing soul manifest: ${getErrorMessage(e.cause)}`, e.cause),
             ),
           FileSystemError: (e) =>
-            Effect.fail(
-              new SoulLoadError({
-                message: `File system error: ${getErrorMessage(e.cause)}`,
-                cause: e.cause,
-              }),
-            ),
+            Effect.fail(soulLoadError(`File system error: ${getErrorMessage(e.cause)}`, e.cause)),
+          SystemError: (error) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning(
+                `[loader] File system error loading soul "${soulName}"`,
+                String(error),
+              );
+              return yield* Effect.fail(
+                soulLoadError(`File system error: ${getErrorMessage(error)}`, error),
+              );
+            }),
+          BadArgument: (error) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning(
+                `[loader] Bad argument loading soul "${soulName}"`,
+                String(error),
+              );
+              return yield* Effect.fail(
+                soulLoadError(`Bad argument: ${getErrorMessage(error)}`, error),
+              );
+            }),
         }),
-        Effect.catchAll((error) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning(
-              `[loader] Unexpected error loading soul "${soulName}"`,
-              String(error),
-            );
-            return yield* Effect.fail(
-              new SoulLoadError({
-                message: `Error loading soul: ${getErrorMessage(error)}`,
-                cause: error,
-              }),
-            );
-          }),
-        ),
         Effect.catchAllDefect((defect) =>
           Effect.gen(function* () {
             yield* Effect.logError(
               `[loader] Defect loading soul "${soulName}"`,
               Cause.pretty(Cause.die(defect)),
             );
-            return yield* Effect.fail(
-              new SoulLoadError({
-                message: `Defect loading soul "${soulName}"`,
-                cause: defect,
-              }),
-            );
+            return yield* Effect.fail(soulLoadError(`Defect loading soul "${soulName}"`, defect));
           }),
         ),
       );
@@ -307,7 +304,9 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
             const result = yield* loadSoul(entry, level).pipe(
               Effect.catchAll((e) =>
                 Effect.gen(function* () {
-                  yield* Effect.logWarning(`[loader] Failed to load soul "${entry}": ${e.message}`);
+                  yield* Effect.logWarning(
+                    `[loader] Failed to load soul "${entry}": ${getErrorMessage(e)}`,
+                  );
                   return null as SoulManifest | null;
                 }),
               ),
@@ -328,39 +327,36 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
           }
         }
 
-        if (results.length === 0) {
-          return yield* Effect.fail(
-            new SoulLoadError({
-              message: "No souls found in any search path.",
-            }),
-          );
-        }
-
         return results;
       }).pipe(
-        Effect.catchAll((error) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("[loader] Unexpected error loading all souls", String(error));
-            return yield* Effect.fail(
-              new SoulLoadError({
-                message: `Error loading souls: ${getErrorMessage(error)}`,
-                cause: error,
-              }),
-            );
-          }),
+        Effect.flatMap((results: SoulManifest[]) =>
+          results.length > 0
+            ? Effect.succeed(results)
+            : Effect.fail(soulLoadError("No souls found in any search path.")),
         ),
+        Effect.catchTags({
+          SystemError: (error) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning("[loader] File system error loading souls", String(error));
+              return yield* Effect.fail(
+                soulLoadError(`File system error: ${getErrorMessage(error)}`, error),
+              );
+            }),
+          BadArgument: (error) =>
+            Effect.gen(function* () {
+              yield* Effect.logWarning("[loader] Bad argument loading souls", String(error));
+              return yield* Effect.fail(
+                soulLoadError(`Bad argument: ${getErrorMessage(error)}`, error),
+              );
+            }),
+        }),
         Effect.catchAllDefect((defect) =>
           Effect.gen(function* () {
             yield* Effect.logError(
               "[loader] Defect loading all souls",
               Cause.pretty(Cause.die(defect)),
             );
-            return yield* Effect.fail(
-              new SoulLoadError({
-                message: "Defect loading all souls",
-                cause: defect,
-              }),
-            );
+            return yield* Effect.fail(soulLoadError("Defect loading all souls", defect));
           }),
         ),
       );
