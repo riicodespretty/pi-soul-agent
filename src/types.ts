@@ -119,7 +119,7 @@ const SkillEntryEncodedSchema = S.Union(
 
 const SkillEntryDecodedSchema = S.Struct({
   name: S.String,
-  version: S.optionalWith(S.String, { exact: true }),
+  version: S.optional(S.String),
   required: S.Boolean,
 });
 export type RecommendedSkill = S.Schema.Type<typeof SkillEntryDecodedSchema>;
@@ -156,12 +156,12 @@ const SensorEntryEncodedSchema = S.Union(
 
 const SensorEntryDecodedSchema = S.Struct({
   name: S.String,
-  type: S.optionalWith(S.String, { exact: true }),
-  range: S.optionalWith(S.String, { exact: true }),
-  fov: S.optionalWith(S.Number, { exact: true }),
-  resolution: S.optionalWith(S.String, { exact: true }),
-  fps: S.optionalWith(S.Number, { exact: true }),
-  channels: S.optionalWith(S.Number, { exact: true }),
+  type: S.optional(S.String),
+  range: S.optional(S.String),
+  fov: S.optional(S.Number),
+  resolution: S.optional(S.String),
+  fps: S.optional(S.Number),
+  channels: S.optional(S.Number),
 });
 export type Sensor = S.Schema.Type<typeof SensorEntryDecodedSchema>;
 
@@ -196,13 +196,13 @@ const ActuatorEntryEncodedSchema = S.Struct({
 
 const ActuatorEntryDecodedSchema = S.Struct({
   name: S.String,
-  type: S.optionalWith(S.String, { exact: true }),
-  maxSpeed: S.optionalWith(S.String, { exact: true }),
-  payload: S.optionalWith(S.String, { exact: true }),
-  reach: S.optionalWith(S.String, { exact: true }),
-  force: S.optionalWith(S.String, { exact: true }),
-  dof: S.optionalWith(S.Number, { exact: true }),
-  resolution: S.optionalWith(S.String, { exact: true }),
+  type: S.optional(S.String),
+  maxSpeed: S.optional(S.String),
+  payload: S.optional(S.String),
+  reach: S.optional(S.String),
+  force: S.optional(S.String),
+  dof: S.optional(S.Number),
+  resolution: S.optional(S.String),
 });
 export type Actuator = S.Schema.Type<typeof ActuatorEntryDecodedSchema>;
 
