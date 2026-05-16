@@ -89,38 +89,25 @@ const enoent = (method: string, path: string) =>
  * ```
  */
 export function createMockFsLayer(souls?: MockSoulDef[]) {
-  // Build directory skeleton from SOUL_SEARCH_PATHS using expandHome
+  // 1. Directory skeleton — all search paths as empty dirs
   const dirs: Record<string, string[]> = {};
   for (const p of SOUL_SEARCH_PATHS) {
-    const resolved = Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
-    dirs[resolved] = [];
+    dirs[Effect.runSync(Effect.provide(expandHome(p), NodePathLayer))] = [];
   }
+  const mkdir = (p: string) => (dirs[p] ??= []);
 
-  const fileContents: Record<string, string> = {};
-  const filePaths = new Set<string>();
+  // 2. File contents (soul.json + content files) for each soul
+  const files: Record<string, string> = {};
 
-  // If souls arg is undefined (not empty array), use a default soul (backward compat)
-  const defs = souls ?? [
-    {
-      name: "bodhisattva-coder" as string,
-      files: { "SOUL.md": "" } as Record<string, string>,
-    },
-  ];
-
+  const defs = souls ?? [{ name: "bodhisattva-coder", files: { "SOUL.md": "" } }];
   for (const soul of defs) {
     const baseDir = soul.searchPath ?? FIRST_PATH;
     const soulDir = `${baseDir}/${soul.name}`;
 
-    // Register in parent directory listing
-    if (!dirs[baseDir]) dirs[baseDir] = [];
-    dirs[baseDir].push(soul.name);
+    mkdir(baseDir).push(soul.name);
+    mkdir(soulDir);
 
-    // Create soul directory entry (for exists + readDirectory)
-    if (!dirs[soulDir]) dirs[soulDir] = [];
-
-    // soul.json
-    const sjPath = `${soulDir}/soul.json`;
-    fileContents[sjPath] =
+    files[`${soulDir}/soul.json`] =
       soul.manifestJson ??
       JSON.stringify({
         ...DEFAULT_SOURCE,
@@ -129,25 +116,20 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
         description: "A test soul",
         tags: [],
       });
-    filePaths.add(sjPath);
 
-    // Content files
-    for (const [filename, content] of Object.entries(soul.files ?? {})) {
-      const fp = `${soulDir}/${filename}`;
-      fileContents[fp] = content;
-      filePaths.add(fp);
+    for (const [fn, content] of Object.entries(soul.files ?? {})) {
+      files[`${soulDir}/${fn}`] = content;
     }
   }
 
-  const dirPathSet = new Set(Object.keys(dirs));
-
+  // 3. Build the layer
   return FileSystem.layerNoop({
-    exists: (path: string) => Effect.succeed(dirPathSet.has(path) || filePaths.has(path)),
-    readFileString: (path: string) => {
-      if (path in fileContents) return Effect.succeed(fileContents[path]);
+    exists: (path) => Effect.succeed(path in dirs || path in files),
+    readFileString: (path) => {
+      if (path in files) return Effect.succeed(files[path]);
       return Effect.fail(enoent("readFileString", path));
     },
-    readDirectory: (path: string) => {
+    readDirectory: (path) => {
       const c = dirs[path];
       if (c !== undefined) return Effect.succeed([...c]);
       return Effect.fail(enoent("readDirectory", path));
