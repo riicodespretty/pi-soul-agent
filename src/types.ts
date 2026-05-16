@@ -31,7 +31,15 @@ export const Mobility = {
 } as const;
 export type Mobility = (typeof Mobility)[keyof typeof Mobility];
 
-// ── Interfaces (ported faithfully from src/.source/soul.ts) ──
+// ── Utility ──
+
+export type DeepPartial<T> = T extends (infer U)[]
+  ? DeepPartial<U>[]
+  : T extends object
+    ? { [K in keyof T]?: DeepPartial<T[K]> }
+    : T;
+
+// ── Interfaces ──
 
 export interface Author {
   readonly name: string;
@@ -49,7 +57,7 @@ export interface Compatibility {
   readonly openclaw?: string;
   readonly models: string[];
   readonly frameworks: string[];
-  readonly min_token_context?: number;
+  readonly minTokenContext?: number;
 }
 
 export interface SoulFiles {
@@ -58,7 +66,7 @@ export interface SoulFiles {
   readonly agents?: string;
   readonly heartbeat?: string;
   readonly style?: string;
-  readonly user_template?: string;
+  readonly userTemplate?: string;
   readonly avatar?: string;
 }
 
@@ -72,19 +80,19 @@ export interface Disclosure {
 }
 
 export interface HardwareConstraints {
-  readonly has_display: boolean;
-  readonly has_speaker: boolean;
-  readonly has_microphone: boolean;
-  readonly has_camera: boolean;
+  readonly hasDisplay: boolean;
+  readonly hasSpeaker: boolean;
+  readonly hasMicrophone: boolean;
+  readonly hasCamera: boolean;
   readonly mobility: Mobility;
   readonly manipulator: boolean;
 }
 
 export interface PhysicalSafety {
-  readonly contact_policy: ContactPolicy;
-  readonly emergency_protocol: string;
-  readonly operating_zone: string;
-  readonly max_speed?: string;
+  readonly contactPolicy: ContactPolicy;
+  readonly emergencyProtocol: string;
+  readonly operatingZone: string;
+  readonly maxSpeed?: string;
 }
 
 export interface Safety {
@@ -104,7 +112,7 @@ export interface Sensor {
 export interface Actuator {
   readonly name: string;
   readonly type?: string;
-  readonly max_speed?: string;
+  readonly maxSpeed?: string;
   readonly payload?: string;
   readonly reach?: string;
   readonly force?: string;
@@ -112,24 +120,27 @@ export interface Actuator {
   readonly resolution?: string;
 }
 
+/** Fields loaded from disk at runtime (not present in soul.json on disk). */
 export interface WritableSoulManifestProps {
-  // These are loaded from disk at runtime — not in the manifest JSON
-  soul_content?: string;
-  identity_content?: string;
-  agents_content?: string;
-  style_content?: string;
-  heartbeat_content?: string;
-  user_template_content?: string;
-  examples_good_content?: string;
-  examples_bad_content?: string;
-  avatar_path?: string;
+  soulContent?: string;
+  identityContent?: string;
+  agentsContent?: string;
+  styleContent?: string;
+  heartbeatContent?: string;
+  userTemplateContent?: string;
+  examplesGoodContent?: string;
+  examplesBadContent?: string;
+  avatarPath?: string;
 }
+
+/** On-disk fields present in soul.json. Used to type manifest overrides. */
+export type SoulManifestData = Omit<SoulManifest, keyof WritableSoulManifestProps>;
 
 /** Main SoulSpec manifest — 30+ fields aggregating all interfaces above */
 export interface SoulManifest extends WritableSoulManifestProps {
-  readonly spec_version: string;
+  readonly specVersion: string;
   readonly name: string;
-  readonly display_name: string;
+  readonly displayName: string;
   readonly version: string;
   readonly description: string;
   readonly author: Author;
@@ -137,17 +148,17 @@ export interface SoulManifest extends WritableSoulManifestProps {
   readonly tags: string[];
   readonly category: string;
   readonly compatibility: Compatibility;
-  readonly allowed_tools: string[];
-  readonly recommended_skills: RecommendedSkill[];
+  readonly allowedTools: string[];
+  readonly recommendedSkills: RecommendedSkill[];
   readonly files: SoulFiles;
   readonly examples?: SoulExamples;
   readonly disclosure?: Disclosure;
   readonly deprecated: boolean;
-  readonly superseded_by?: string;
+  readonly supersededBy?: string;
   readonly repository?: string;
   readonly environment: Environment;
-  readonly interaction_mode: InteractionMode;
-  readonly hardware_constraints?: HardwareConstraints;
+  readonly interactionMode: InteractionMode;
+  readonly hardwareConstraints?: HardwareConstraints;
   readonly safety?: Safety;
   readonly sensors: Sensor[];
   readonly actuators: Actuator[];

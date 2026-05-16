@@ -30,7 +30,7 @@ export function registerSoulsCommand(pi: ExtensionAPI, runtime: AppRuntime): voi
       let message = "Available souls:\n\n";
       for (const entry of entries) {
         if (entry._tag === "loaded") {
-          message += `\u2022 **${entry.manifest.display_name}** (${entry.name})\n`;
+          message += `\u2022 **${entry.manifest.displayName}** (${entry.name})\n`;
           message += `  ${entry.manifest.description}\n`;
           if (entry.manifest.disclosure?.summary) {
             message += `  ${entry.manifest.disclosure.summary}\n`;
@@ -210,7 +210,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         switch (result._tag) {
           case "success":
             ctx.ui.notify(
-              `Now using soul: ${result.manifest.display_name} (level ${parsed.level}). This soul will auto-load in future sessions.`,
+              `Now using soul: ${result.manifest.displayName} (level ${parsed.level}). This soul will auto-load in future sessions.`,
               "info",
             );
             pi.sendMessage(

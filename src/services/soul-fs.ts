@@ -47,8 +47,8 @@ export function expandHome(p: string) {
 }
 
 /**
- * Parse a raw JSON data object into a typed SoulManifest.
- * Maps camelCase JSON fields (from SoulSpec v0.5 soul.json) to snake_case TS fields.
+ * Parse a raw JSON data object (from soul.json on disk) into a typed SoulManifest.
+ * Field names match one-to-one — no case conversion needed.
  */
 export function parseManifest(data: Record<string, unknown>): SoulManifest {
   const author: Author = {
@@ -62,7 +62,7 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
     openclaw: compatData?.openclaw as string | undefined,
     models: (compatData?.models as string[]) || [],
     frameworks: (compatData?.frameworks as string[]) || [],
-    min_token_context: compatData?.minTokenContext as number | undefined,
+    minTokenContext: compatData?.minTokenContext as number | undefined,
   };
 
   // Parse recommended skills (handle both new object format and legacy string format)
@@ -88,7 +88,7 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
     agents: filesData?.agents as string | undefined,
     heartbeat: filesData?.heartbeat as string | undefined,
     style: filesData?.style as string | undefined,
-    user_template: filesData?.userTemplate as string | undefined,
+    userTemplate: filesData?.userTemplate as string | undefined,
     avatar: filesData?.avatar as string | undefined,
   };
 
@@ -110,10 +110,10 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
   const hcData = data.hardwareConstraints as Record<string, unknown> | undefined;
   const hardwareConstraints: HardwareConstraints | undefined = hcData
     ? {
-        has_display: (hcData.hasDisplay as boolean) || false,
-        has_speaker: (hcData.hasSpeaker as boolean) || false,
-        has_microphone: (hcData.hasMicrophone as boolean) || false,
-        has_camera: (hcData.hasCamera as boolean) || false,
+        hasDisplay: (hcData.hasDisplay as boolean) || false,
+        hasSpeaker: (hcData.hasSpeaker as boolean) || false,
+        hasMicrophone: (hcData.hasMicrophone as boolean) || false,
+        hasCamera: (hcData.hasCamera as boolean) || false,
         mobility: Mobility[hcData.mobility as keyof typeof Mobility] || Mobility.STATIONARY,
         manipulator: (hcData.manipulator as boolean) || false,
       }
@@ -123,12 +123,12 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
   const physData = safetyData?.physical as Record<string, unknown> | undefined;
   const physicalSafety: PhysicalSafety | undefined = physData
     ? {
-        contact_policy:
+        contactPolicy:
           ContactPolicy[physData.contactPolicy as keyof typeof ContactPolicy] ||
           ContactPolicy.NO_CONTACT,
-        emergency_protocol: (physData.emergencyProtocol as string) || "stop",
-        operating_zone: (physData.operatingZone as string) || "indoor",
-        max_speed: physData.maxSpeed as string | undefined,
+        emergencyProtocol: (physData.emergencyProtocol as string) || "stop",
+        operatingZone: (physData.operatingZone as string) || "indoor",
+        maxSpeed: physData.maxSpeed as string | undefined,
       }
     : undefined;
 
@@ -165,7 +165,7 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
       actuators.push({
         name,
         type: ad.type as string | undefined,
-        max_speed: ad.maxSpeed as string | undefined,
+        maxSpeed: ad.maxSpeed as string | undefined,
         payload: ad.payload as string | undefined,
         reach: ad.reach as string | undefined,
         force: ad.force as string | undefined,
@@ -176,9 +176,9 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
   }
 
   return {
-    spec_version: (data.specVersion as string) || "0.5",
+    specVersion: (data.specVersion as string) || "0.5",
     name: (data.name as string) || "unknown",
-    display_name: (data.displayName as string) || "Unknown",
+    displayName: (data.displayName as string) || "Unknown",
     version: (data.version as string) || "1.0.0",
     description: (data.description as string) || "",
     author,
@@ -186,18 +186,18 @@ export function parseManifest(data: Record<string, unknown>): SoulManifest {
     tags: (data.tags as string[]) || [],
     category: (data.category as string) || "general",
     compatibility,
-    allowed_tools: (data.allowedTools as string[]) || [],
-    recommended_skills: recommendedSkills,
+    allowedTools: (data.allowedTools as string[]) || [],
+    recommendedSkills: recommendedSkills,
     files,
     examples,
     disclosure,
     deprecated: (data.deprecated as boolean) || false,
-    superseded_by: data.supersededBy as string | undefined,
+    supersededBy: data.supersededBy as string | undefined,
     repository: data.repository as string | undefined,
     environment: Environment[data.environment as keyof typeof Environment] || Environment.VIRTUAL,
-    interaction_mode:
+    interactionMode:
       InteractionMode[data.interactionMode as keyof typeof InteractionMode] || InteractionMode.TEXT,
-    hardware_constraints: hardwareConstraints,
+    hardwareConstraints: hardwareConstraints,
     safety,
     sensors,
     actuators,

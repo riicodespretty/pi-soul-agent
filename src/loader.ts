@@ -34,24 +34,24 @@ function soulLoadError(message: string, cause?: unknown): SoulLoadError {
 /**
  * Filter a manifest to only include content fields up to the requested level.
  * Level 1: metadata only (no content fields)
- * Level 2: soul_content + identity_content
+ * Level 2: soulContent + identityContent
  * Level 3: all content fields
  */
 export function filterByLevel(manifest: SoulManifest, level: number): SoulManifest {
   const result = { ...manifest };
 
   if (level < 3) {
-    delete result.agents_content;
-    delete result.style_content;
-    delete result.heartbeat_content;
-    delete result.user_template_content;
-    delete result.examples_good_content;
-    delete result.examples_bad_content;
+    delete result.agentsContent;
+    delete result.styleContent;
+    delete result.heartbeatContent;
+    delete result.userTemplateContent;
+    delete result.examplesGoodContent;
+    delete result.examplesBadContent;
   }
 
   if (level < 2) {
-    delete result.soul_content;
-    delete result.identity_content;
+    delete result.soulContent;
+    delete result.identityContent;
   }
 
   return result;
@@ -95,8 +95,8 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
      * Cache is updated with upgrade-only policy (never downgrades).
      *
      * Level 1: metadata only (soul.json)
-     * Level 2: include soul_content + identity_content
-     * Level 3: include all content (agents, style, heartbeat, user_template, examples)
+     * Level 2: include soulContent + identityContent
+     * Level 3: include all content (agents, style, heartbeat, userTemplate, examples)
      */
     const loadSoul = (soulName: string, soulPath: string, level: number = 2) => {
       return Effect.gen(function* () {
@@ -133,19 +133,19 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
           );
 
         // Level 1 content
-        yield* readAndSet("avatar_path", manifest.files.avatar, 1);
+        yield* readAndSet("avatarPath", manifest.files.avatar, 1);
 
         // Level 2 content
-        yield* readAndSet("soul_content", manifest.files.soul, 2);
-        yield* readAndSet("identity_content", manifest.files.identity, 2);
+        yield* readAndSet("soulContent", manifest.files.soul, 2);
+        yield* readAndSet("identityContent", manifest.files.identity, 2);
 
         // Level 3 content
-        yield* readAndSet("agents_content", manifest.files.agents, 3);
-        yield* readAndSet("style_content", manifest.files.style, 3);
-        yield* readAndSet("heartbeat_content", manifest.files.heartbeat, 3);
-        yield* readAndSet("user_template_content", manifest.files.user_template, 3);
-        yield* readAndSet("examples_good_content", manifest.examples?.good, 3);
-        yield* readAndSet("examples_bad_content", manifest.examples?.bad, 3);
+        yield* readAndSet("agentsContent", manifest.files.agents, 3);
+        yield* readAndSet("styleContent", manifest.files.style, 3);
+        yield* readAndSet("heartbeatContent", manifest.files.heartbeat, 3);
+        yield* readAndSet("userTemplateContent", manifest.files.userTemplate, 3);
+        yield* readAndSet("examplesGoodContent", manifest.examples?.good, 3);
+        yield* readAndSet("examplesBadContent", manifest.examples?.bad, 3);
 
         // Cache: upgrade-only (never downgrade)
         yield* Ref.update(cache, (m) => {

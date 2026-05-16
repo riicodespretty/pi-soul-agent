@@ -4,29 +4,29 @@ import { SystemError } from "@effect/platform/Error";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import { SoulSpecLoader, SOUL_SEARCH_PATHS } from "@/src/loader";
 import { expandHome, parseManifest } from "@/src/services/soul-fs";
-import type { SoulManifest } from "@/src/types";
+import type { DeepPartial, SoulManifest, SoulManifestData } from "@/src/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
  * Soul definition for building mock FS layers.
- * The soul.json is generated with camelCase keys matching parseManifest expectations
- * (e.g. `displayName` not `display_name`).
+ * The `manifest` field uses camelCase keys matching the SoulManifest type
+ * (no conversion needed — soul.json and the TypeScript type are now in sync).
  */
 export interface MockSoulDef {
   /** Soul directory name (used as both directory name and manifest `name`) */
   readonly name: string;
-  /** Explicit camelCase JSON for soul.json. Auto-generated from `name` if omitted. */
-  readonly manifestJson?: string;
+  /** Explicit partial manifest to merge with auto-generated defaults. */
+  readonly manifest?: DeepPartial<SoulManifestData>;
   /** Content files to create: filename → content string. */
   readonly files?: Record<string, string>;
   /** Search path to place this soul in (default: ~/.pi/agent/souls) */
   readonly soulPath?: string;
 }
 
-// ── Source of truth: camelCase JSON (what a real soul.json looks like) ──────
+// ── Source of truth: typed default manifest — matches what a real soul.json looks like ──
 
-const DEFAULT_SOURCE = {
+const DEFAULT_SOURCE: SoulManifestData = {
   specVersion: "0.5",
   name: "bodhisattva-coder",
   displayName: "Bodhisattva Coder",
@@ -43,15 +43,19 @@ const DEFAULT_SOURCE = {
   deprecated: false,
   environment: "virtual",
   interactionMode: "text",
+  sensors: [],
+  actuators: [],
 };
 
 /**
  * Derived SoulManifest via parseManifest.
- * NOTE: content fields (soul_content, identity_content, etc.) are not included
+ * NOTE: Content fields (soulContent, identityContent, etc.) are not included
  * because parseManifest only parses the JSON manifest — loadSoul sets them
  * at runtime by reading content files.
  */
-export const MOCK_SOUL_MANIFEST: SoulManifest = parseManifest(DEFAULT_SOURCE);
+export const MOCK_SOUL_MANIFEST: SoulManifest = parseManifest(
+  DEFAULT_SOURCE as unknown as Record<string, unknown>,
+);
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -73,7 +77,7 @@ const enoent = (method: string, path: string) =>
  * Each soul gets:
  *   - An entry in its parent search path's directory listing
  *   - Its own directory (for listing & exists checks)
- *   - A `soul.json` file (auto-generated or explicit)
+ *   - A `soul.json` file (auto-generated + merged with explicit manifest)
  *   - Any content files declared via `.files`
  *
  * @example
@@ -100,15 +104,15 @@ export function createMockFsLayer(souls?: MockSoulDef[]) {
     mkdir(baseDir).push(soul.name);
     mkdir(soulDir);
 
-    files[`${soulDir}/soul.json`] =
-      soul.manifestJson ??
-      JSON.stringify({
-        ...DEFAULT_SOURCE,
-        name: soul.name,
-        displayName: soul.name,
-        description: "A test soul",
-        tags: [],
-      });
+    // Merge explicit manifest with defaults
+    files[`${soulDir}/soul.json`] = JSON.stringify({
+      ...DEFAULT_SOURCE,
+      name: soul.name,
+      displayName: soul.name,
+      description: "A test soul",
+      tags: [],
+      ...soul.manifest,
+    });
 
     for (const [f, content] of Object.entries(soul.files ?? {})) {
       files[`${soulDir}/${f}`] = content;

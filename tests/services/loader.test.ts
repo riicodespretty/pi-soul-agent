@@ -63,7 +63,7 @@ describe("SoulSpecLoader", () => {
       yield* loader.getSoul("bodhisattva-coder", 3);
       yield* loader.getSoul("bodhisattva-coder", 1);
       const after = yield* loader.getSoul("bodhisattva-coder", 3);
-      expect(after.soul_content).toBeDefined();
+      expect(after.soulContent).toBeDefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer()),
@@ -76,8 +76,8 @@ describe("SoulSpecLoader", () => {
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul("bodhisattva-coder", 1);
-      expect(soul.soul_content).toBeUndefined();
-      expect(soul.identity_content).toBeUndefined();
+      expect(soul.soulContent).toBeUndefined();
+      expect(soul.identityContent).toBeUndefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer()),
@@ -92,7 +92,7 @@ describe("SoulSpecLoader", () => {
       const result = yield* loader.loadAllSouls(1);
       expect(result.length).toBeGreaterThan(0);
       expect(result[0].name).toBeDefined();
-      expect(result[0].soul_content).toBeUndefined();
+      expect(result[0].soulContent).toBeUndefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer()),
@@ -104,32 +104,32 @@ describe("SoulSpecLoader", () => {
   it("filterByLevel at level 1 removes content fields", () => {
     const manifest: SoulManifest = {
       name: "test",
-      display_name: "Test",
+      displayName: "Test",
       version: "1.0",
-      spec_version: "0.5",
+      specVersion: "0.5",
       description: "",
       author: { name: "T" },
       license: "MIT",
       tags: [],
       category: "general",
       compatibility: { models: [], frameworks: [] },
-      allowed_tools: [],
-      recommended_skills: [],
+      allowedTools: [],
+      recommendedSkills: [],
       files: { soul: "SOUL.md" },
       deprecated: false,
       environment: "virtual",
-      interaction_mode: "text",
+      interactionMode: "text",
       sensors: [],
       actuators: [],
-      soul_content: "hello",
-      identity_content: "world",
-      agents_content: "agents",
-      style_content: "style",
+      soulContent: "hello",
+      identityContent: "world",
+      agentsContent: "agents",
+      styleContent: "style",
     };
     const filtered = filterByLevel(manifest, 1);
-    expect(filtered.soul_content).toBeUndefined();
-    expect(filtered.identity_content).toBeUndefined();
-    expect(filtered.agents_content).toBeUndefined();
+    expect(filtered.soulContent).toBeUndefined();
+    expect(filtered.identityContent).toBeUndefined();
+    expect(filtered.agentsContent).toBeUndefined();
     expect(filtered.name).toBe("test");
   });
 
@@ -247,37 +247,37 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // Test 12: filterByLevel at level 2 keeps soul_content, removes agents_content
-  it("filterByLevel at level 2 keeps soul_content but removes agents_content", () => {
+  // Test 12: filterByLevel at level 2 keeps soulContent, removes agentsContent
+  it("filterByLevel at level 2 keeps soulContent but removes agentsContent", () => {
     const manifest: SoulManifest = {
       name: "test",
-      display_name: "Test",
+      displayName: "Test",
       version: "1.0",
-      spec_version: "0.5",
+      specVersion: "0.5",
       description: "",
       author: { name: "T" },
       license: "MIT",
       tags: [],
       category: "general",
       compatibility: { models: [], frameworks: [] },
-      allowed_tools: [],
-      recommended_skills: [],
+      allowedTools: [],
+      recommendedSkills: [],
       files: { soul: "SOUL.md" },
       deprecated: false,
       environment: "virtual",
-      interaction_mode: "text",
+      interactionMode: "text",
       sensors: [],
       actuators: [],
-      soul_content: "soul content",
-      identity_content: "identity content",
-      agents_content: "agents content",
-      style_content: "style content",
+      soulContent: "soul content",
+      identityContent: "identity content",
+      agentsContent: "agents content",
+      styleContent: "style content",
     };
     const filtered = filterByLevel(manifest, 2);
-    expect(filtered.soul_content).toBe("soul content");
-    expect(filtered.identity_content).toBe("identity content");
-    expect(filtered.agents_content).toBeUndefined();
-    expect(filtered.style_content).toBeUndefined();
+    expect(filtered.soulContent).toBe("soul content");
+    expect(filtered.identityContent).toBe("identity content");
+    expect(filtered.agentsContent).toBeUndefined();
+    expect(filtered.styleContent).toBeUndefined();
   });
 });
 
@@ -288,39 +288,39 @@ describe("SoulSpecLoader", () => {
 describe("Adversarial — filterByLevel", () => {
   const full: SoulManifest = {
     name: "t",
-    display_name: "T",
+    displayName: "T",
     version: "1",
-    spec_version: "0.5",
+    specVersion: "0.5",
     description: "",
     author: { name: "A" },
     license: "MIT",
     tags: [],
     category: "general",
     compatibility: { models: [], frameworks: [] },
-    allowed_tools: [],
-    recommended_skills: [],
+    allowedTools: [],
+    recommendedSkills: [],
     files: { soul: "SOUL.md" },
     deprecated: false,
     environment: "virtual",
-    interaction_mode: "text",
+    interactionMode: "text",
     sensors: [],
     actuators: [],
-    soul_content: "s",
-    identity_content: "i",
-    agents_content: "a",
-    style_content: "s",
-    heartbeat_content: "h",
-    user_template_content: "u",
-    examples_good_content: "g",
-    examples_bad_content: "b",
-    avatar_path: "av",
+    soulContent: "s",
+    identityContent: "i",
+    agentsContent: "a",
+    styleContent: "s",
+    heartbeatContent: "h",
+    userTemplateContent: "u",
+    examplesGoodContent: "g",
+    examplesBadContent: "b",
+    avatarPath: "av",
   };
 
   const testFilterLevel = (label: string | number, level: number, expectContent: boolean) =>
     it(`level ${String(label)} ${expectContent ? "keeps" : "strips"} content fields`, () => {
       const f = filterByLevel(full, level);
-      expect(f.soul_content).toBe(expectContent ? "s" : undefined);
-      expect(f.identity_content).toBe(expectContent ? "i" : undefined);
+      expect(f.soulContent).toBe(expectContent ? "s" : undefined);
+      expect(f.identityContent).toBe(expectContent ? "i" : undefined);
       expect(f.name).toBe("t");
     });
 
@@ -330,120 +330,120 @@ describe("Adversarial — filterByLevel", () => {
 
   it("level 2 strips only level-3 fields", () => {
     const f = filterByLevel(full, 2);
-    expect(f.soul_content).toBe("s");
-    expect(f.identity_content).toBe("i");
-    expect(f.agents_content).toBeUndefined();
-    expect(f.style_content).toBeUndefined();
-    expect(f.heartbeat_content).toBeUndefined();
+    expect(f.soulContent).toBe("s");
+    expect(f.identityContent).toBe("i");
+    expect(f.agentsContent).toBeUndefined();
+    expect(f.styleContent).toBeUndefined();
+    expect(f.heartbeatContent).toBeUndefined();
   });
 
   it("level 3 keeps all content", () => {
     const f = filterByLevel(full, 3);
-    expect(f.soul_content).toBe("s");
-    expect(f.agents_content).toBe("a");
-    expect(f.examples_bad_content).toBe("b");
+    expect(f.soulContent).toBe("s");
+    expect(f.agentsContent).toBe("a");
+    expect(f.examplesBadContent).toBe("b");
   });
 
   it("level 4+ does not crash and keeps content", () => {
     const f4 = filterByLevel(full, 4);
-    expect(f4.soul_content).toBe("s");
-    expect(f4.agents_content).toBe("a");
+    expect(f4.soulContent).toBe("s");
+    expect(f4.agentsContent).toBe("a");
     const f999 = filterByLevel(full, 999);
-    expect(f999.soul_content).toBe("s");
+    expect(f999.soulContent).toBe("s");
   });
 
   it("level Infinity keeps all content", () => {
     const f = filterByLevel(full, Infinity);
-    expect(f.soul_content).toBe("s");
-    expect(f.agents_content).toBe("a");
+    expect(f.soulContent).toBe("s");
+    expect(f.agentsContent).toBe("a");
   });
 
   it("NaN level comparisons are always false so content is preserved", () => {
     // In JS: NaN < 2 → false, NaN < 3 → false
     // So no deletion conditions trigger — NaN behaves like level >= 3
     const f = filterByLevel(full, NaN);
-    expect(f.soul_content).toBe("s");
-    expect(f.agents_content).toBe("a");
+    expect(f.soulContent).toBe("s");
+    expect(f.agentsContent).toBe("a");
     expect(f.name).toBe("t");
   });
 
   it("sparse manifest without optional fields does not crash", () => {
     const sparse: SoulManifest = {
       name: "s",
-      display_name: "S",
+      displayName: "S",
       version: "1",
-      spec_version: "0.5",
+      specVersion: "0.5",
       description: "",
       author: { name: "A" },
       license: "MIT",
       tags: [],
       category: "general",
       compatibility: { models: [], frameworks: [] },
-      allowed_tools: [],
-      recommended_skills: [],
+      allowedTools: [],
+      recommendedSkills: [],
       files: { soul: "SOUL.md" },
       deprecated: false,
       environment: "virtual",
-      interaction_mode: "text",
+      interactionMode: "text",
       sensors: [],
       actuators: [],
     };
     expect(() => filterByLevel(sparse, 3)).not.toThrow();
-    expect(filterByLevel(sparse, 1).soul_content).toBeUndefined();
+    expect(filterByLevel(sparse, 1).soulContent).toBeUndefined();
   });
 
   it("original manifest is not mutated", () => {
     const copy = { ...full };
     filterByLevel(copy, 1);
-    expect(full.soul_content).toBe("s");
+    expect(full.soulContent).toBe("s");
   });
 
   it("manifest with empty string content fields preserves them at level 2+", () => {
     const m: SoulManifest = {
       name: "t",
-      display_name: "T",
+      displayName: "T",
       version: "1",
-      spec_version: "0.5",
+      specVersion: "0.5",
       description: "",
       author: { name: "A" },
       license: "MIT",
       tags: [],
       category: "general",
       compatibility: { models: [], frameworks: [] },
-      allowed_tools: [],
-      recommended_skills: [],
+      allowedTools: [],
+      recommendedSkills: [],
       files: { soul: "SOUL.md" },
       deprecated: false,
       environment: "virtual",
-      interaction_mode: "text",
+      interactionMode: "text",
       sensors: [],
       actuators: [],
-      soul_content: "",
-      identity_content: "",
+      soulContent: "",
+      identityContent: "",
     };
     const f = filterByLevel(m, 2);
-    expect(f.soul_content).toBe("");
-    expect(f.identity_content).toBe("");
+    expect(f.soulContent).toBe("");
+    expect(f.identityContent).toBe("");
   });
 
   it("manifest with only non-content fields is stable", () => {
     const m: SoulManifest = {
       name: "n",
-      display_name: "N",
+      displayName: "N",
       version: "1",
-      spec_version: "0.5",
+      specVersion: "0.5",
       description: "",
       author: { name: "A" },
       license: "MIT",
       tags: [],
       category: "general",
       compatibility: { models: [], frameworks: [] },
-      allowed_tools: [],
-      recommended_skills: [],
+      allowedTools: [],
+      recommendedSkills: [],
       files: { soul: "SOUL.md" },
       deprecated: false,
       environment: "virtual",
-      interaction_mode: "text",
+      interactionMode: "text",
       sensors: [],
       actuators: [],
     };
@@ -534,7 +534,7 @@ describe("Adversarial — content file behavior", () => {
         createMockFsLayer([
           {
             name: "missing-file",
-            manifestJson: JSON.stringify({
+            manifest: {
               specVersion: "0.5",
               name: "missing-file",
               displayName: "Missing File",
@@ -551,7 +551,7 @@ describe("Adversarial — content file behavior", () => {
               deprecated: false,
               environment: "virtual",
               interactionMode: "text",
-            }),
+            },
             // No files object — NONEXISTENT.md is NOT created
           },
         ]),
@@ -565,10 +565,10 @@ describe("Adversarial — content file behavior", () => {
       const loader = yield* SoulSpecLoader;
       // Level 1 should NOT try to read SOUL.md (minLevel=2)
       const soul = yield* loader.getSoul("bodhisattva-coder", 1);
-      expect(soul.soul_content).toBeUndefined();
+      expect(soul.soulContent).toBeUndefined();
       // Verify the mock is working: level 2 DOES read it
       const soul2 = yield* loader.getSoul("bodhisattva-coder", 2);
-      expect(soul2.soul_content).toBeDefined();
+      expect(soul2.soulContent).toBeDefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
@@ -583,19 +583,19 @@ describe("Adversarial — content file behavior", () => {
     ),
   );
 
-  it.effect("avatar_path is set at level 1 when avatar file is present", () =>
+  it.effect("avatarPath is set at level 1 when avatar file is present", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul("avatar-soul", 1);
-      expect(soul.avatar_path).toBeDefined();
-      expect(typeof soul.avatar_path).toBe("string");
+      expect(soul.avatarPath).toBeDefined();
+      expect(typeof soul.avatarPath).toBe("string");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
         createMockFsLayer([
           {
             name: "avatar-soul",
-            manifestJson: JSON.stringify({
+            manifest: {
               specVersion: "0.5",
               name: "avatar-soul",
               displayName: "Avatar Soul",
@@ -612,7 +612,7 @@ describe("Adversarial — content file behavior", () => {
               deprecated: false,
               environment: "virtual",
               interactionMode: "text",
-            }),
+            },
             files: { "SOUL.md": "# Soul", "avatar.png": "image-bytes" },
           },
         ]),
@@ -626,21 +626,21 @@ describe("Adversarial — content file behavior", () => {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul("full-soul", 3);
 
-      expect(soul.soul_content).toBe("Hello Soul");
-      expect(soul.identity_content).toBe("Hello Identity");
-      expect(soul.agents_content).toBe("Hello Agents");
-      expect(soul.style_content).toBe("Hello Style");
-      expect(soul.heartbeat_content).toBe("Hello Heartbeat");
-      expect(soul.user_template_content).toBe("Hello Template");
-      expect(soul.examples_good_content).toBe("Good Example");
-      expect(soul.examples_bad_content).toBe("Bad Example");
+      expect(soul.soulContent).toBe("Hello Soul");
+      expect(soul.identityContent).toBe("Hello Identity");
+      expect(soul.agentsContent).toBe("Hello Agents");
+      expect(soul.styleContent).toBe("Hello Style");
+      expect(soul.heartbeatContent).toBe("Hello Heartbeat");
+      expect(soul.userTemplateContent).toBe("Hello Template");
+      expect(soul.examplesGoodContent).toBe("Good Example");
+      expect(soul.examplesBadContent).toBe("Bad Example");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
         createMockFsLayer([
           {
             name: "full-soul",
-            manifestJson: JSON.stringify({
+            manifest: {
               specVersion: "0.5",
               name: "full-soul",
               displayName: "Full Soul",
@@ -666,7 +666,7 @@ describe("Adversarial — content file behavior", () => {
               deprecated: false,
               environment: "virtual",
               interactionMode: "text",
-            }),
+            },
             files: {
               "SOUL.md": "Hello Soul",
               "IDENTITY.md": "Hello Identity",
@@ -689,8 +689,8 @@ describe("Adversarial — content file behavior", () => {
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul("no-examples", 3);
-      expect(soul.examples_good_content).toBeUndefined();
-      expect(soul.examples_bad_content).toBeUndefined();
+      expect(soul.examplesGoodContent).toBeUndefined();
+      expect(soul.examplesBadContent).toBeUndefined();
       expect(soul.name).toBe("no-examples");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
@@ -730,18 +730,18 @@ describe("Adversarial — loadAllSouls contract", () => {
       const loader = yield* SoulSpecLoader;
       const souls = yield* loader.loadAllSouls(1);
       expect(souls.length).toBe(1);
-      expect(souls[0].display_name).toBe("First");
+      expect(souls[0].displayName).toBe("First");
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
         createMockFsLayer([
           {
             name: "duplicate",
-            manifestJson: JSON.stringify({ name: "duplicate", displayName: "First" }),
+            manifest: { name: "duplicate", displayName: "First" },
           },
           {
             name: "duplicate",
-            manifestJson: JSON.stringify({ name: "duplicate", displayName: "Second" }),
+            manifest: { name: "duplicate", displayName: "Second" },
             soulPath: `${process.env.HOME}/.openclaw/souls/clawsouls`,
           },
         ]),
@@ -775,7 +775,7 @@ describe("Adversarial — cache isolation", () => {
       // Level 1 request hits cache; cache is upgrade-only so level-3 data preserved
       yield* loader.getSoul("bodhisattva-coder", 1);
       const after = yield* loader.getSoul("bodhisattva-coder", 3);
-      expect(after.soul_content).toBeDefined();
+      expect(after.soulContent).toBeDefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(
@@ -900,14 +900,14 @@ describe("Adversarial — multiple souls", () => {
     ),
   );
 
-  it.effect("loadAllSouls at level 2 reads soul_content for all souls", () =>
+  it.effect("loadAllSouls at level 2 reads soulContent for all souls", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const souls = yield* loader.loadAllSouls(2);
       expect(souls.length).toBe(2);
       for (const soul of souls) {
-        expect(soul.soul_content).toBeDefined();
-        expect(soul.soul_content).toContain("Content");
+        expect(soul.soulContent).toBeDefined();
+        expect(soul.soulContent).toContain("Content");
       }
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),

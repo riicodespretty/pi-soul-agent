@@ -36,7 +36,7 @@ export function registerLoadSoulTool(pi: ExtensionAPI, runtime: AppRuntime): voi
             content: [
               {
                 type: "text" as const,
-                text: `Soul "${soul.display_name}" loaded successfully.\n\nSystem Prompt:\n${systemPrompt}`,
+                text: `Soul "${soul.displayName}" loaded successfully.\n\nSystem Prompt:\n${systemPrompt}`,
               },
             ],
             details: {
@@ -105,7 +105,7 @@ export function registerListSoulsTool(pi: ExtensionAPI, runtime: AppRuntime): vo
           let response = "Available souls:\n\n";
           for (const entry of entries) {
             if (entry._tag === "loaded") {
-              response += `- **${entry.manifest.display_name}** (${entry.name})\n`;
+              response += `- **${entry.manifest.displayName}** (${entry.name})\n`;
               response += `  ${entry.manifest.description}\n`;
               if (entry.manifest.disclosure?.summary) {
                 response += `  ${entry.manifest.disclosure.summary}\n`;
@@ -148,7 +148,7 @@ export function registerSoulInfoTool(pi: ExtensionAPI, runtime: AppRuntime): voi
           const loader = yield* SoulSpecLoader;
           const soul = yield* loader.load(params.soul_name, 1);
 
-          let info = `# ${soul.display_name}\n\n`;
+          let info = `# ${soul.displayName}\n\n`;
           info += `**Name:** ${soul.name}\n`;
           info += `**Version:** ${soul.version}\n`;
           info += `**Description:** ${soul.description}\n`;
@@ -162,20 +162,20 @@ export function registerSoulInfoTool(pi: ExtensionAPI, runtime: AppRuntime): voi
             info += `**Summary:** ${soul.disclosure.summary}\n`;
           }
 
-          if (soul.recommended_skills.length > 0) {
+          if (soul.recommendedSkills.length > 0) {
             info += `\n**Recommended Skills:**\n`;
-            for (const skill of soul.recommended_skills) {
+            for (const skill of soul.recommendedSkills) {
               info += `- ${skill.name}${skill.required ? " (required)" : ""}\n`;
             }
           }
 
-          if (soul.hardware_constraints) {
+          if (soul.hardwareConstraints) {
             info += `\n**Hardware Constraints:**\n`;
-            const hc = soul.hardware_constraints;
-            info += `- Display: ${hc.has_display ? "Yes" : "No"}\n`;
-            info += `- Speaker: ${hc.has_speaker ? "Yes" : "No"}\n`;
-            info += `- Microphone: ${hc.has_microphone ? "Yes" : "No"}\n`;
-            info += `- Camera: ${hc.has_camera ? "Yes" : "No"}\n`;
+            const hc = soul.hardwareConstraints;
+            info += `- Display: ${hc.hasDisplay ? "Yes" : "No"}\n`;
+            info += `- Speaker: ${hc.hasSpeaker ? "Yes" : "No"}\n`;
+            info += `- Microphone: ${hc.hasMicrophone ? "Yes" : "No"}\n`;
+            info += `- Camera: ${hc.hasCamera ? "Yes" : "No"}\n`;
             info += `- Mobility: ${hc.mobility}\n`;
             info += `- Manipulator: ${hc.manipulator ? "Yes" : "No"}\n`;
           }

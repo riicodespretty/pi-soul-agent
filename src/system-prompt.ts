@@ -20,7 +20,7 @@ export function buildSystemPrompt(
   const parts: string[] = [];
 
   // Level 1: Basic info
-  parts.push(`# ${manifest.display_name}`);
+  parts.push(`# ${manifest.displayName}`);
   parts.push(`\n${manifest.description}`);
 
   if (manifest.disclosure?.summary) {
@@ -29,40 +29,40 @@ export function buildSystemPrompt(
 
   // Level 2: Core persona
   if (level >= 2) {
-    if (manifest.soul_content) {
-      parts.push(`\n\n## Persona\n\n${manifest.soul_content}`);
+    if (manifest.soulContent) {
+      parts.push(`\n\n## Persona\n\n${manifest.soulContent}`);
     }
 
-    if (includeIdentity && manifest.identity_content) {
-      parts.push(`\n\n## Identity\n\n${manifest.identity_content}`);
+    if (includeIdentity && manifest.identityContent) {
+      parts.push(`\n\n## Identity\n\n${manifest.identityContent}`);
     }
   }
 
   // Level 3: Extended behavior
   if (level >= 3) {
-    if (manifest.style_content) {
-      parts.push(`\n\n## Style Guidelines\n\n${manifest.style_content}`);
+    if (manifest.styleContent) {
+      parts.push(`\n\n## Style Guidelines\n\n${manifest.styleContent}`);
     }
 
-    if (manifest.agents_content) {
-      parts.push(`\n\n## Agent Behavior\n\n${manifest.agents_content}`);
+    if (manifest.agentsContent) {
+      parts.push(`\n\n## Agent Behavior\n\n${manifest.agentsContent}`);
     }
 
-    if (manifest.heartbeat_content) {
-      parts.push(`\n\n## Heartbeat\n\n${manifest.heartbeat_content}`);
+    if (manifest.heartbeatContent) {
+      parts.push(`\n\n## Heartbeat\n\n${manifest.heartbeatContent}`);
     }
 
-    if (manifest.user_template_content) {
-      parts.push(`\n\n## User Message Template\n\n${manifest.user_template_content}`);
+    if (manifest.userTemplateContent) {
+      parts.push(`\n\n## User Message Template\n\n${manifest.userTemplateContent}`);
     }
 
-    if (manifest.examples_good_content || manifest.examples_bad_content) {
+    if (manifest.examplesGoodContent || manifest.examplesBadContent) {
       parts.push("\n\n## Calibration Examples");
-      if (manifest.examples_good_content) {
-        parts.push(`\n\n### Good Outputs\n\n${manifest.examples_good_content}`);
+      if (manifest.examplesGoodContent) {
+        parts.push(`\n\n### Good Outputs\n\n${manifest.examplesGoodContent}`);
       }
-      if (manifest.examples_bad_content) {
-        parts.push(`\n\n### Outputs to Avoid\n\n${manifest.examples_bad_content}`);
+      if (manifest.examplesBadContent) {
+        parts.push(`\n\n### Outputs to Avoid\n\n${manifest.examplesBadContent}`);
       }
     }
   }
@@ -72,17 +72,17 @@ export function buildSystemPrompt(
     parts.push(`\n\n## Environment`);
     parts.push(`\nYou are an **${manifest.environment}** agent.`);
 
-    if (manifest.interaction_mode !== InteractionMode.TEXT) {
-      parts.push(`\nPrimary interaction mode: ${manifest.interaction_mode}`);
+    if (manifest.interactionMode !== InteractionMode.TEXT) {
+      parts.push(`\nPrimary interaction mode: ${manifest.interactionMode}`);
     }
 
-    if (manifest.hardware_constraints) {
-      const hc = manifest.hardware_constraints;
+    if (manifest.hardwareConstraints) {
+      const hc = manifest.hardwareConstraints;
       const capabilities: string[] = [];
-      if (hc.has_display) capabilities.push("display");
-      if (hc.has_speaker) capabilities.push("speaker");
-      if (hc.has_microphone) capabilities.push("microphone");
-      if (hc.has_camera) capabilities.push("camera");
+      if (hc.hasDisplay) capabilities.push("display");
+      if (hc.hasSpeaker) capabilities.push("speaker");
+      if (hc.hasMicrophone) capabilities.push("microphone");
+      if (hc.hasCamera) capabilities.push("camera");
       if (capabilities.length > 0) {
         parts.push(`\nHardware: ${capabilities.join(", ")}`);
       }
@@ -90,7 +90,7 @@ export function buildSystemPrompt(
 
     if (manifest.safety?.physical) {
       const ps = manifest.safety.physical;
-      parts.push(`\nSafety: ${ps.contact_policy} contact policy`);
+      parts.push(`\nSafety: ${ps.contactPolicy} contact policy`);
     }
   }
 
