@@ -1,8 +1,9 @@
 import { Effect, Layer } from "effect";
 import { FileSystem } from "@effect/platform";
 import { SystemError } from "@effect/platform/Error";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import { SoulSpecLoader, SOUL_SEARCH_PATHS } from "@/src/loader";
-import { parseManifest } from "@/src/services/soul-fs";
+import { expandHome, parseManifest } from "@/src/services/soul-fs";
 import type { SoulManifest } from "@/src/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -88,10 +89,10 @@ const enoent = (method: string, path: string) =>
  * ```
  */
 export function createMockFsLayer(souls?: MockSoulDef[]) {
-  // Build directory skeleton from SOUL_SEARCH_PATHS
+  // Build directory skeleton from SOUL_SEARCH_PATHS using expandHome
   const dirs: Record<string, string[]> = {};
   for (const p of SOUL_SEARCH_PATHS) {
-    const resolved = p.startsWith("~/") ? `${HOME}/${p.slice(2)}` : p;
+    const resolved = Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
     dirs[resolved] = [];
   }
 
