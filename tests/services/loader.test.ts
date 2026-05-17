@@ -4,9 +4,9 @@ import { FileSystem } from "@effect/platform";
 import { SystemError } from "@effect/platform/Error";
 import { vi } from "vitest";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
-import { SoulSpecLoader } from "@/src/loader";
-import { SoulLoadError } from "@/src/errors";
-import { createMockFsLayer, DEFAULT_SOURCE } from "@/tests/helpers";
+import { SoulSpecLoader } from "../../src/loader";
+import { SoulLoadError } from "../../src/errors";
+import { createMockFsLayer, DEFAULT_SOURCE } from "../helpers";
 
 // Stub HOME so expandHome("~/...") resolves to paths matching the mock FS.
 vi.stubEnv("HOME", "/Users/test");

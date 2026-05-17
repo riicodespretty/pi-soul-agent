@@ -1,10 +1,10 @@
 import { describe, it, expect } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
-import { parseSoulCommandArgs } from "@/src/commands";
-import { SoulSpecLoader } from "@/src/loader";
-import { ActiveSoulPersistence } from "@/src/persistence";
-import { createMockFsLayer, DEFAULT_SOURCE } from "@/tests/helpers";
+import { parseSoulCommandArgs } from "../src/commands";
+import { SoulSpecLoader } from "../src/loader";
+import { ActiveSoulPersistence } from "../src/persistence";
+import { createMockFsLayer, DEFAULT_SOURCE } from "./helpers";
 import { vi } from "vitest";
 
 vi.stubEnv("HOME", "/Users/test");
