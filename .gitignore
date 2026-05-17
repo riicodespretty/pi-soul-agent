@@ -23,7 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 
-# Vendored / local-only directories
-.agents/
-src/.effect/
-src/.source/
+# Docs and scratchpads (local only, not tracked in git)
+docs/
+review-*.md
+research*.md
+scout-*.md
+oracle-*.md
+progress.md
+context.md
