@@ -104,9 +104,11 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
     // appends immediately to agent.state.messages and persists to the session,
     // rather than queueing in _pendingNextTurnMessages to be flushed on the
     // next user message.
+    // Wrap in XML tags so the LLM can distinguish this as an automatic
+    // system reminder rather than a direct user message.
     pi.sendMessage({
       customType: "soul-heartbeat-reminder",
-      content: result.content,
+      content: `<soul-heartbeat-reminder>\n${result.content}\n</soul-heartbeat-reminder>`,
       display: false,
     });
   });
