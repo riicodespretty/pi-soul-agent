@@ -219,19 +219,28 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
     };
 
     /**
-     * List all cached souls at the requested level.
-     * Infallible — returns [] on empty cache.
+     * List all discovered souls at the requested level.
+     * Returns cached manifests when already populated at sufficient level.
+     * Otherwise loads via loadAllSouls (which respects cache internally).
+     * Fails with SoulLoadError when no souls are found.
      */
-    const listSouls = () => {
+    const listSouls = (level: number = 1) => {
       return Effect.gen(function* () {
-        const currentCache = Ref.get(cache);
+        const currentCache = yield* Ref.get(cache);
 
-        // Cache miss
-        if (Array.from((yield* currentCache).values()).length === 0) {
-          yield* loadAllSouls();
+        // Cache already populated at requested level — skip I/O
+        const hasAllAtLevel =
+          currentCache.size > 0 &&
+          Array.from(currentCache.values()).every((e) => e.cachedLevel >= level);
+
+        if (!hasAllAtLevel) {
+          yield* loadAllSouls(level);
         }
 
-        return Array.from((yield* currentCache).values()).map((entry) => entry.manifest.name);
+        const updatedCache = yield* Ref.get(cache);
+        return Array.from(updatedCache.values()).map((entry) =>
+          filterByLevel(entry.manifest, level),
+        );
       });
     };
 
@@ -240,6 +249,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       loadAllSouls,
       listSouls,
       loadSoul,
+      resolveSoulPath,
     } as const;
   }).pipe(
     Effect.catchAllDefect((defect) =>

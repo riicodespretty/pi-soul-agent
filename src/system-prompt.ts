@@ -89,9 +89,9 @@ export function buildSystemPrompt(manifest: SoulManifest, level: number = 2): st
 
   push(
     "\nSafety: ",
-    `${manifest.safety!.physical!.contactPolicy} contact policy`,
+    `${manifest.safety?.physical?.contactPolicy ?? "unknown"} contact policy`,
     1,
-    envActive && Boolean(manifest.safety?.physical),
+    envActive && Boolean(manifest.safety?.physical?.contactPolicy),
   );
 
   return parts.join("");

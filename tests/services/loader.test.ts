@@ -571,12 +571,13 @@ describe("Adversarial — multiple souls", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("Adversarial — listSouls", () => {
-  it.effect("listSouls returns names after loadAllSouls", () =>
+  it.effect("listSouls returns manifests after loadAllSouls", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const names = yield* loader.listSouls();
-      expect(Array.isArray(names)).toBe(true);
-      expect(names).toContain(DEFAULT_SOURCE.name);
+      const manifests = yield* loader.listSouls();
+      expect(Array.isArray(manifests)).toBe(true);
+      expect(manifests.some((m) => m.name === DEFAULT_SOURCE.name)).toBe(true);
+      expect(manifests[0].description).toBeDefined();
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
       Effect.provide(createMockFsLayer([{ name: DEFAULT_SOURCE.name }])),
@@ -584,10 +585,11 @@ describe("Adversarial — listSouls", () => {
     ),
   );
 
-  it.effect("listSouls on empty cache triggers loadAllSouls and returns names", () =>
+  it.effect("listSouls on empty cache triggers loadAllSouls and returns manifests", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
-      const names = yield* loader.listSouls();
+      const manifests = yield* loader.listSouls();
+      const names = manifests.map((m) => m.name);
       expect(names).toEqual(["a", "b"]);
     }).pipe(
       Effect.provide(Layer.fresh(SoulSpecLoader.Default)),

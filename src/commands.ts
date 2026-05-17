@@ -1,89 +1,96 @@
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Option, pipe } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime } from "@/src/types";
+import type { AppRuntime, ParsedSoulCommand, SoulManifest } from "@/src/types";
 import { SoulSpecLoader } from "@/src/loader";
 import { ActiveSoulPersistence } from "@/src/persistence";
 import { buildSystemPrompt } from "@/src/system-prompt";
 
-/**
- * Register the `/souls` command.
- * Lists all available souls via UI notification.
- */
-export function registerSoulsCommand(pi: ExtensionAPI, runtime: AppRuntime): void {
-  pi.registerCommand("souls", {
-    description: "List all available SoulSpec personas",
-    handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      ctx.ui.notify("Loading souls...", "info");
-
-      const entries = await runtime.runPromise(
-        Effect.gen(function* () {
-          const loader = yield* SoulSpecLoader;
-          return yield* loader.enumerateSouls();
-        }),
-      );
-
-      if (entries.length === 0) {
-        ctx.ui.notify("No souls found. Create a souls/ directory with soul.json files.", "error");
-        return;
-      }
-
-      let message = "Available souls:\n\n";
-      for (const entry of entries) {
-        if (entry._tag === "loaded") {
-          message += `\u2022 **${entry.manifest.displayName}** (${entry.name})\n`;
-          message += `  ${entry.manifest.description}\n`;
-          if (entry.manifest.disclosure?.summary) {
-            message += `  ${entry.manifest.disclosure.summary}\n`;
-          }
-        } else {
-          message += `\u2022 **${entry.name}** (Error: ${entry.reason})\n`;
-        }
-        message += "\n";
-      }
-
-      ctx.ui.notify(message, "info");
-    },
-  });
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// Pure Parsing
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Parse /soul command arguments.
  * Supports: soulname, soulname --level N, --level=N, --help, off|clear|none|default
+ * Returns a discriminated union — each action variant has only its relevant fields.
  */
-function parseSoulCommandArgs(args: string): {
-  action: "activate" | "deactivate" | "help";
-  soulName?: string;
-  level: number;
-} {
+
+export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
   const trimmed = args.trim();
 
   // Help
   if (trimmed === "--help" || trimmed === "-h") {
-    return { action: "help", level: 2 };
+    return { action: "help" };
   }
 
-  // Deactivate
-  if (["off", "clear", "none", "default"].includes(trimmed)) {
-    return { action: "deactivate", level: 2 };
+  // Deactivate (--clear or -c flag)
+  if (trimmed === "--clear" || trimmed === "-c") {
+    return { action: "deactivate" };
   }
 
-  // Parse --level from args (support both "--level 3" and "--level=3")
-  let soulArgs = trimmed;
-  let level = 2;
-  const levelMatch = soulArgs.match(/--level\s*=\s*(\d+)/i) || soulArgs.match(/--level\s+(\d+)/i);
-  if (levelMatch) {
-    level = parseInt(levelMatch[1], 10);
-    level = Math.max(1, Math.min(3, level)); // Clamp to 1-3
-    soulArgs = soulArgs.replace(/--level\s*[= ]\s*\d+/i, "").trim();
-  }
+  // Parse optional --level flag using Option (match can return null)
+  const level = pipe(
+    Option.fromNullable(/--level\s*=\s*(\d+)/i.exec(trimmed) ?? /--level\s+(\d+)/i.exec(trimmed)),
+    Option.map((m) => Math.max(1, Math.min(3, Number.parseInt(m[1], 10)))),
+    Option.getOrElse(() => 2),
+  );
 
-  // Soul name only
-  return {
-    action: "activate",
-    soulName: soulArgs,
-    level,
-  };
+  // Strip --level flag to get soul name
+  const soulName = trimmed.replace(/--level\s*[= ]\s*\d+/i, "").trim();
+
+  return { action: "activate", soulName, level };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Command: /soul-list
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Register the `/soul-list` command.
+ * Lists all available SoulSpec personas by name (level 1 metadata).
+ */
+export function registerSoulListCommand(pi: ExtensionAPI, runtime: AppRuntime): void {
+  pi.registerCommand("soul-list", {
+    description: "List all available SoulSpec personas",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      const listSoulsPipeline = Effect.gen(function* () {
+        const loader = yield* SoulSpecLoader;
+        return yield* loader.listSouls();
+      });
+
+      const result = await runtime.runPromise(
+        Effect.matchCause(listSoulsPipeline, {
+          onSuccess: (souls) => ({ _tag: "success" as const, souls }),
+          onFailure: (cause) => ({
+            _tag: "error" as const,
+            message: `Error listing souls: ${Cause.pretty(cause)}`,
+          }),
+        }),
+      );
+
+      if (result._tag === "error") {
+        ctx.ui.notify(result.message, "error");
+        return;
+      }
+
+      if (result.souls.length === 0) {
+        ctx.ui.notify("No souls found. Create a souls/ directory with soul.json files.", "error");
+        return;
+      }
+
+      const lines = result.souls.map((s) => {
+        const summary = s.disclosure?.summary ?? s.description ?? "";
+        const namePart = s.displayName === s.name ? s.name : `${s.name} — ${s.displayName}`;
+        return summary ? `${namePart}\n  ${summary}` : namePart;
+      });
+      ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Command: /soul
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Register the `/soul` command.
@@ -92,26 +99,26 @@ function parseSoulCommandArgs(args: string): {
 export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void {
   pi.registerCommand("soul", {
     description:
-      "Activate a soul (/soul <name> [--level N]) or deactivate (/soul off|clear|none|default). Use /soul --help for details.",
+      "Activate a soul (/soul <name> [--level N]) or deactivate (/soul --clear, -c). Use /soul --help for details.",
     getArgumentCompletions: async (prefix: string) => {
-      return await runtime.runPromise(
-        Effect.gen(function* () {
-          const loader = yield* SoulSpecLoader;
-          const souls = yield* loader.getAllSouls().pipe(
-            Effect.catchAll((e) => {
-              console.debug(`[commands] Error in soul completions: ${e.message}`);
-              return Effect.succeed([] as string[]);
-            }),
-          );
-          return souls
-            .filter((s: string) => s.startsWith(prefix))
-            .map((s: string) => ({
-              value: s,
-              label: s,
-              description: `Load soul: ${s}`,
-            }));
+      const listSoulsPipeline = Effect.gen(function* () {
+        const loader = yield* SoulSpecLoader;
+        return yield* loader.listSouls();
+      });
+
+      const result = await runtime.runPromise(
+        Effect.matchCause(listSoulsPipeline, {
+          onSuccess: (souls) => souls,
+          onFailure: () => [] as SoulManifest[],
         }),
       );
+      return result
+        .filter((s) => s.name.startsWith(prefix))
+        .map((s) => ({
+          value: s.name,
+          label: s.displayName,
+          description: s.disclosure?.summary ?? s.description ?? "",
+        }));
     },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const parsed = parseSoulCommandArgs(args);
@@ -119,124 +126,208 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       if (parsed.action === "help") {
         const helpMsg = [
           "Usage: /soul <name> [--level N]",
-          "       /soul off|clear|none|default",
+          "       /soul --clear (or -c)",
           "",
           "Load and activate a SoulSpec persona.",
           "  --level N    Progressive disclosure level (1-3, default 2)",
           "",
+          "Tab-completion shows available souls with descriptions.",
+          "",
           "Examples:",
           "  /soul developer",
           "  /soul developer --level 3  (full disclosure)",
-          "  /soul off                   (deactivate current soul)",
+          "  /soul --clear, -c          (deactivate current soul)",
         ].join("\n");
         ctx.ui.notify(helpMsg, "info");
         return;
       }
 
       if (parsed.action === "deactivate") {
+        const deactivateSoulPipeline = Effect.gen(function* () {
+          const persistence = yield* ActiveSoulPersistence;
+          return yield* persistence.clear();
+        });
+
         const result = await runtime.runPromise(
-          Effect.gen(function* () {
-            const persistence = yield* ActiveSoulPersistence;
-            yield* persistence.clear();
-            return { _tag: "success" as const };
-          }).pipe(
-            Effect.catchAllCause(() =>
-              Effect.succeed({
-                _tag: "error" as const,
-                message: `Error deactivating soul: Unexpected error`,
-              }),
-            ),
-          ),
+          Effect.matchCause(deactivateSoulPipeline, {
+            onSuccess: () => ({ _tag: "success" as const }),
+            onFailure: (cause) => ({
+              _tag: "error" as const,
+              message: `Error deactivating soul: ${Cause.pretty(cause)}`,
+            }),
+          }),
         );
 
-        if (result._tag === "success") {
-          ctx.ui.notify("Soul deactivated. No soul will auto-load in future sessions.", "info");
-        } else {
+        if (result._tag === "error") {
           ctx.ui.notify(result.message, "error");
+          return;
         }
+
+        ctx.ui.notify("Soul deactivated. No soul will auto-load in future sessions.", "info");
         return;
       }
 
-      // Activate
+      // No soul name provided — show usage
       if (!parsed.soulName) {
-        const souls = await runtime.runPromise(
-          Effect.gen(function* () {
-            const loader = yield* SoulSpecLoader;
-            return yield* loader.getAllSouls().pipe(
-              Effect.catchAll((e) => {
-                console.debug(`[commands] Error getting souls: ${e.message}`);
-                return Effect.succeed([] as string[]);
-              }),
-            );
+        const listSoulsPipeline = Effect.gen(function* () {
+          const loader = yield* SoulSpecLoader;
+          return yield* loader.listSouls();
+        });
+
+        const result = await runtime.runPromise(
+          Effect.matchCause(listSoulsPipeline, {
+            onSuccess: (souls) => ({ _tag: "success" as const, souls }),
+            onFailure: (cause) => ({
+              _tag: "error" as const,
+              message: `Error listing souls: ${Cause.pretty(cause)}`,
+            }),
           }),
         );
-        let msg = "Usage: /soul <soul-name>\n\nAvailable souls:\n";
-        for (const s of souls) {
-          msg += `\n  \u2022 **${s}**`;
+
+        if (result._tag === "error") {
+          ctx.ui.notify(result.message, "error");
+          return;
         }
-        msg += "\n\nUse /soul off to clear the active soul.";
+
+        let msg = "Usage: /soul <soul-name>\n\nAvailable souls:\n";
+        for (const s of result.souls) {
+          const summary = s.disclosure?.summary ?? s.description ?? "";
+          const namePart = s.displayName === s.name ? s.name : `${s.name} — ${s.displayName}`;
+          msg += `\n  \u2022 **${namePart}**`;
+          if (summary) msg += `\n    ${summary}`;
+        }
+        msg += "\n\nUse /soul --clear (or -c) to deactivate the active soul.";
         ctx.ui.notify(msg, "error");
         return;
       }
 
-      try {
-        const result = await runtime.runPromise(
-          Effect.gen(function* () {
-            const loader = yield* SoulSpecLoader;
-            const persistence = yield* ActiveSoulPersistence;
-            const manifest = yield* loader.load(parsed.soulName!, parsed.level);
-            const systemPrompt = buildSystemPrompt(manifest, parsed.level);
-            yield* persistence.save(manifest.name, parsed.level);
-            return { _tag: "success" as const, manifest, systemPrompt };
-          }).pipe(
-            Effect.catchTag("SoulLoadError", (e) => {
-              // SoulLoadError.message already contains suggestions for not-found cases
-              console.debug(`[commands] Error loading soul: ${e.message}`);
-              return Effect.succeed({
-                _tag: "error" as const,
-                message: e.message,
-              });
-            }),
-            Effect.catchAllCause((cause) => {
-              console.error(`[commands] Defect activating soul: ${Cause.pretty(cause)}`);
-              return Effect.succeed({
-                _tag: "error" as const,
-                message: "Error activating soul: Unexpected error",
-              });
-            }),
-          ),
-        );
+      // Activate
+      const activateSoulPipeline = Effect.gen(function* () {
+        const loader = yield* SoulSpecLoader;
+        const persistence = yield* ActiveSoulPersistence;
+        const manifest = yield* loader.getSoul(parsed.soulName, parsed.level);
+        const systemPrompt = buildSystemPrompt(manifest, parsed.level);
+        yield* persistence.save(manifest.name, parsed.level);
+        return { manifest, systemPrompt } as const;
+      });
 
-        switch (result._tag) {
-          case "success":
-            ctx.ui.notify(
-              `Now using soul: ${result.manifest.displayName} (level ${parsed.level}). This soul will auto-load in future sessions.`,
-              "info",
-            );
-            pi.sendMessage(
-              {
-                customType: "soulspec",
-                content: result.systemPrompt,
-                display: true,
-                details: {
-                  soul: result.manifest.name,
-                  prompt: result.systemPrompt,
-                  level: parsed.level,
-                },
-              },
-              {
-                deliverAs: "steer",
-              },
-            );
-            break;
-          case "error":
-            ctx.ui.notify(result.message, "error");
-            break;
-        }
-      } catch (error) {
-        // Keep this outer catch as safety net for non-Effect failures (pi.sendMessage, etc.)
-        ctx.ui.notify(`Error activating soul: ${String(error)}`, "error");
+      const result = await runtime.runPromise(
+        Effect.matchCause(activateSoulPipeline, {
+          onSuccess: ({ manifest, systemPrompt }) => ({
+            _tag: "success" as const,
+            manifest,
+            systemPrompt,
+          }),
+          onFailure: (cause) => ({
+            _tag: "error" as const,
+            message: `Error activating soul: ${Cause.pretty(cause)}`,
+          }),
+        }),
+      );
+
+      if (result._tag === "error") {
+        ctx.ui.notify(result.message, "error");
+        return;
       }
+
+      ctx.ui.notify(
+        `Now using soul: ${result.manifest.displayName} (level ${parsed.level}). This soul will auto-load in future sessions.`,
+        "info",
+      );
+
+      pi.sendMessage(
+        {
+          customType: "soulspec",
+          content: result.systemPrompt,
+          display: false,
+          details: {
+            soul: result.manifest.name,
+            prompt: result.systemPrompt,
+            level: parsed.level,
+          },
+        },
+        {
+          deliverAs: "steer",
+        },
+      );
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Command: /soul-info
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Register the `/soul-info` command.
+ * Shows active soul details and optionally the full system prompt.
+ */
+export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): void {
+  pi.registerCommand("soul-info", {
+    description:
+      "Show active soul info. Add --full (or -f) to display the full generated system prompt.",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const showFull = args.trim() === "--full" || args.trim() === "-f";
+
+      const describeSoulPipeline = Effect.gen(function* () {
+        const persistence = yield* ActiveSoulPersistence;
+        const loaded = yield* persistence.load();
+        if (loaded._tag === "None") {
+          return { _tag: "inactive" as const };
+        }
+
+        const active = loaded.value;
+        const loader = yield* SoulSpecLoader;
+        const soulPath = yield* loader.resolveSoulPath(active.soul);
+        const manifest = yield* loader.getSoul(active.soul, active.level);
+        const systemPrompt = showFull ? buildSystemPrompt(manifest, active.level) : null;
+
+        return {
+          _tag: "active" as const,
+          manifest,
+          soulPath,
+          level: active.level,
+          systemPrompt,
+        };
+      });
+
+      const result = await runtime.runPromise(
+        Effect.matchCause(describeSoulPipeline, {
+          onSuccess: (data) => data,
+          onFailure: (cause) => ({
+            _tag: "error" as const,
+            message: `Error getting soul info: ${Cause.pretty(cause)}`,
+          }),
+        }),
+      );
+
+      if (result._tag === "error") {
+        ctx.ui.notify(result.message, "error");
+        return;
+      }
+
+      if (result._tag === "inactive") {
+        ctx.ui.notify("No active soul. Use /soul <name> to activate one.", "info");
+        return;
+      }
+
+      const { manifest, soulPath, level, systemPrompt } = result;
+      const summary = manifest.disclosure?.summary ?? manifest.description ?? "";
+      const namePart =
+        manifest.displayName !== manifest.name
+          ? `${manifest.name} \u2014 ${manifest.displayName}`
+          : manifest.name;
+
+      let msg = `\u2022 **${namePart}**`;
+      if (summary) msg += `\n  ${summary}`;
+      msg += `\n  Path: ${soulPath}`;
+      msg += `\n  Level: ${level}`;
+
+      if (systemPrompt) {
+        msg += `\n\n--- Full System Prompt ---\n\n${systemPrompt}`;
+      }
+
+      ctx.ui.notify(msg, "info");
     },
   });
 }

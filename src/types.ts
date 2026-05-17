@@ -297,5 +297,13 @@ export const ActiveSoulSchema = S.Struct({
 });
 export type ActiveSoul = S.Schema.Type<typeof ActiveSoulSchema>;
 
+/** Parsed /soul command arguments — discriminated union by action. */
+export const ParsedSoulCommandSchema = S.Union(
+  S.Struct({ action: S.Literal("help") }),
+  S.Struct({ action: S.Literal("deactivate") }),
+  S.Struct({ action: S.Literal("activate"), soulName: S.String, level: S.Number }),
+);
+export type ParsedSoulCommand = S.Schema.Type<typeof ParsedSoulCommandSchema>;
+
 /** Application runtime type for the Pi extension bridge */
 export type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>;

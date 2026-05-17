@@ -146,10 +146,17 @@ export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFES
     }
   }
 
-  // 3. Build the layer
+  // 3. Writable storage for runtime writes (e.g. persistence files)
+  const writableFs: Record<string, string> = {};
+
+  // 4. Helper: check existence across all stores
+  const existsInMock = (path: string) => path in dirs || path in fileSystem || path in writableFs;
+
+  // 5. Build the layer
   return FileSystem.layerNoop({
-    exists: (path) => Effect.succeed(path in dirs || path in fileSystem),
+    exists: (path) => Effect.succeed(existsInMock(path)),
     readFileString: (path) => {
+      if (path in writableFs) return Effect.succeed(writableFs[path]);
       if (path in fileSystem) return Effect.succeed(fileSystem[path]);
       return Effect.fail(enoent("readFileString", path));
     },
@@ -158,6 +165,16 @@ export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFES
       if (c !== undefined) return Effect.succeed([...c]);
       return Effect.fail(enoent("readDirectory", path));
     },
+    makeDirectory: (_path: string, _options?: { readonly recursive?: boolean }) =>
+      Effect.succeed(undefined),
+    writeFileString: (path: string, content: string) =>
+      Effect.sync(() => {
+        writableFs[path] = content;
+      }),
+    remove: (path: string) =>
+      Effect.sync(() => {
+        delete writableFs[path];
+      }),
   });
 }
 
