@@ -19,6 +19,7 @@ This project exists to learn:
 - **Effect TS** — services, layers, `ManagedRuntime`, `Effect.gen`, schema, error handling, and structured concurrency
 - **Pi extension development** — events, tools, commands, and lifecycle hooks
 - **Writing Effect TS using agentic coding** — letting the agent scaffold, refactor, and iterate on Effect services while I steer; learning what prompts produce correct layers, how to verify generated Effect code, and where the agent still needs human guidance
+- **Agent used** - DeepSeek V4 Flash
 
 ---
 
