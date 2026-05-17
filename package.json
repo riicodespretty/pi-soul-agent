@@ -1,7 +1,6 @@
 {
   "name": "pi-soul-agent",
-  "version": "0.0.0",
-  "private": true,
+  "version": "1.0.0",
   "description": "Pi extension for ClawSouls SoulSpec persona activation and heartbeat reminder",
   "keywords": [
     "agent",
@@ -20,6 +19,18 @@
     "soulspec",
     "typescript",
     "vite-plus"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/riicodespretty/pi-soul-agent.git"
+  },
+  "files": [
+    "package.json",
+    ".pi/",
+    "src/",
+    "README.md",
+    "AGENTS.md"
   ],
   "type": "module",
   "scripts": {
