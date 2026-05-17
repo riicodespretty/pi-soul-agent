@@ -290,10 +290,14 @@ export interface WritableSoulManifestProps {
 export interface SoulManifest extends WritableSoulManifestProps, SoulManifestData {}
 
 /** Schema for persisted active soul entry (runtime data, not from soul.json). */
+export const HeartbeatModeSchema = S.Literal("lite", "full");
+export type HeartbeatMode = S.Schema.Type<typeof HeartbeatModeSchema>;
+
 export const ActiveSoulSchema = S.Struct({
   soul: S.String,
   level: S.Number,
   updatedAt: S.Number,
+  heartbeatMode: S.optionalWith(HeartbeatModeSchema, { default: () => "lite" as const }),
 });
 export type ActiveSoul = S.Schema.Type<typeof ActiveSoulSchema>;
 
@@ -302,6 +306,7 @@ export const ParsedSoulCommandSchema = S.Union(
   S.Struct({ action: S.Literal("help") }),
   S.Struct({ action: S.Literal("deactivate") }),
   S.Struct({ action: S.Literal("activate"), soulName: S.String, level: S.Number }),
+  S.Struct({ action: S.Literal("heartbeat"), mode: HeartbeatModeSchema }),
 );
 export type ParsedSoulCommand = S.Schema.Type<typeof ParsedSoulCommandSchema>;
 

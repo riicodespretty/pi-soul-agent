@@ -1,7 +1,7 @@
 import { Cause, Effect, Option, pipe } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime } from "./types";
+import type { AppRuntime, HeartbeatMode } from "./types";
 import { SOUL_SEARCH_PATHS, SoulSpecLoader } from "./loader";
 import { ActiveSoulPersistence } from "./persistence";
 import { expandHome } from "./services/soul-fs";
@@ -41,14 +41,13 @@ const _heartbeatCoordinator = { servicedAtTurn: -1 };
  * before the first check-in arrives.
  */
 export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppRuntime): void {
-  const INTERVALS = [6, 3, 2, 3] as const;
   let intervalIndex = 0;
-  let nextTurnAt = INTERVALS[0];
+  let nextTurnAt = 6;
   let totalTurns = 0;
 
   pi.on("session_start", async () => {
     intervalIndex = 0;
-    nextTurnAt = INTERVALS[0];
+    nextTurnAt = 6;
     totalTurns = 0;
   });
 
@@ -76,7 +75,12 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       const content = Option.fromNullable(manifest.heartbeatContent);
       if (Option.isNone(content)) return { active: false as const };
 
-      return { active: true as const, content: content.value };
+      return {
+        active: true as const,
+        content: content.value,
+        // Use heartbeat mode from persisted settings (default "lite" = single interval)
+        mode: soul.heartbeatMode ?? ("lite" as const),
+      };
     });
 
     const result = await runtime.runPromise(
@@ -96,9 +100,16 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
 
     if (!result.active) return;
 
-    // Advance to the next bead in the mala
-    intervalIndex = (intervalIndex + 1) % INTERVALS.length;
-    nextTurnAt += INTERVALS[intervalIndex];
+    // Advance the mala based on heartbeat mode
+    // lite: single 6-interval (every 6 turns)
+    // full: full mala cycle [6, 3, 2, 3]
+    const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
+      lite: [6],
+      full: [6, 3, 2, 3],
+    };
+    const intervals = HEARTBEAT_INTERVALS[result.mode];
+    intervalIndex = (intervalIndex + 1) % intervals.length;
+    nextTurnAt += intervals[intervalIndex];
 
     // No deliverAs option: when the agent is idle (not streaming), this
     // appends immediately to agent.state.messages and persists to the session,

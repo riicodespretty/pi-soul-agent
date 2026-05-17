@@ -29,6 +29,12 @@ export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
     return { action: "deactivate" };
   }
 
+  // Heartbeat mode (--heartbeat lite|full)
+  const hbMatch = /^--heartbeat\s+(lite|full)$/i.exec(trimmed);
+  if (hbMatch) {
+    return { action: "heartbeat", mode: hbMatch[1].toLowerCase() as "lite" | "full" };
+  }
+
   // Parse optional --level flag using Option (match can return null)
   const level = pipe(
     Option.fromNullable(/--level\s*=\s*(\d+)/i.exec(trimmed) ?? /--level\s+(\d+)/i.exec(trimmed)),
@@ -103,6 +109,25 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
     description:
       "Activate a soul (/soul <name> [--level N]) or deactivate (/soul --clear, -c). Use /soul --help for details.",
     getArgumentCompletions: async (prefix: string) => {
+      // Suggest --heartbeat flags
+      if (
+        "--heartbeat ".startsWith(prefix) ||
+        "--heartbeat ".toLowerCase().startsWith(prefix.toLowerCase())
+      ) {
+        return [
+          {
+            value: "--heartbeat lite",
+            label: "lite",
+            description: "Every 6 turns",
+          },
+          {
+            value: "--heartbeat full",
+            label: "full",
+            description: "Full mala cycle (Every 6→3→2→3 turns)",
+          },
+        ];
+      }
+
       const listSoulsPipeline = Effect.gen(function* () {
         const loader = yield* SoulSpecLoader;
         return yield* loader.listSouls();
@@ -129,9 +154,14 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         const helpMsg = [
           "Usage: /soul <name> [--level N]",
           "       /soul --clear (or -c)",
+          "       /soul --heartbeat lite|full",
           "",
           "Load and activate a SoulSpec persona.",
           "  --level N    Progressive disclosure level (1-3, default 2)",
+          "",
+          "Heartbeat mode:",
+          "  --heartbeat lite   Every 6 turns (default, ~2.4 tok/turn)",
+          "  --heartbeat full   Full mala cycle 6→3→2→3 (~3.5 avg, ~6.9 tok/turn)",
           "",
           "Tab-completion shows available souls with descriptions.",
           "",
@@ -139,8 +169,39 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           "  /soul developer",
           "  /soul developer --level 3  (full disclosure)",
           "  /soul --clear, -c          (deactivate current soul)",
+          "  /soul --heartbeat lite     (reduce heartbeat frequency)",
+          "  /soul --heartbeat full     (full mala cycle)",
         ].join("\n");
         notifyUI(ctx, helpMsg, "info");
+        return;
+      }
+
+      if (parsed.action === "heartbeat") {
+        const updateHeartbeatPipeline = Effect.gen(function* () {
+          const persistence = yield* ActiveSoulPersistence;
+          return yield* persistence.updateHeartbeatMode(parsed.mode);
+        });
+
+        const result = await runtime.runPromise(
+          Effect.matchCause(updateHeartbeatPipeline, {
+            onSuccess: () => ({ _tag: "success" as const }),
+            onFailure: (cause) => ({
+              _tag: "error" as const,
+              message: `Error updating heartbeat mode: ${Cause.pretty(cause)}`,
+            }),
+          }),
+        );
+
+        if (result._tag === "error") {
+          notifyUI(ctx, result.message, "error");
+          return;
+        }
+
+        notifyUI(
+          ctx,
+          `Heartbeat mode set to ${parsed.mode}. Will take effect after restart or /reload.`,
+          "info",
+        );
         return;
       }
 
@@ -207,9 +268,14 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       const activateSoulPipeline = Effect.gen(function* () {
         const loader = yield* SoulSpecLoader;
         const persistence = yield* ActiveSoulPersistence;
+
+        // Preserve existing heartbeat mode when switching souls
+        const existing = yield* persistence.load();
+        const heartbeatMode = Option.isSome(existing) ? existing.value.heartbeatMode : undefined;
+
         const manifest = yield* loader.getSoul(parsed.soulName, parsed.level);
         const systemPrompt = buildSystemPrompt(manifest, parsed.level);
-        yield* persistence.save(manifest.name, parsed.level);
+        yield* persistence.save(manifest.name, parsed.level, heartbeatMode);
         return { manifest, systemPrompt } as const;
       });
 

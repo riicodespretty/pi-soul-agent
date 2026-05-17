@@ -1,6 +1,6 @@
 import { Cause, Effect, Option, Schema as S } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import { ActiveSoulSchema, type ActiveSoul } from "./types";
+import { ActiveSoulSchema, type ActiveSoul, type HeartbeatMode } from "./types";
 import { FileSystemError } from "./errors";
 import { expandHome, readJsonFile } from "./services/soul-fs";
 import { logError } from "./logger";
@@ -29,7 +29,7 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
        * Save the active soul to disk.
        * Creates the parent directory if it doesn't exist (mkdir failure is not fatal).
        */
-      const save = (soulName: string, level: number) =>
+      const save = (soulName: string, level: number, heartbeatMode?: HeartbeatMode) =>
         Effect.gen(function* () {
           const path = yield* Path;
           const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
@@ -39,7 +39,12 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
             .makeDirectory(path.dirname(filePath), { recursive: true })
             .pipe(Effect.catchAll(() => Effect.void));
 
-          const data: ActiveSoul = { soul: soulName, level, updatedAt: Date.now() };
+          const data: ActiveSoul = {
+            soul: soulName,
+            level,
+            updatedAt: Date.now(),
+            heartbeatMode: heartbeatMode ?? "lite",
+          };
           yield* fs.writeFileString(filePath, JSON.stringify(data, null, 2));
         }).pipe(
           Effect.catchAll((cause) =>
@@ -81,7 +86,27 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           ),
         );
 
-      return { save, load, clear } as const;
+      /**
+       * Update the heartbeat mode without changing the soul name or level.
+       */
+      const updateHeartbeatMode = (mode: HeartbeatMode) =>
+        Effect.gen(function* () {
+          const current = yield* load();
+          if (Option.isNone(current)) {
+            return yield* Effect.fail(persistenceError("No active soul to update heartbeat mode"));
+          }
+
+          const existing = current.value;
+          const data: ActiveSoul = { ...existing, heartbeatMode: mode, updatedAt: Date.now() };
+          const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
+          yield* fs.writeFileString(filePath, JSON.stringify(data, null, 2));
+        }).pipe(
+          Effect.catchAll((cause) =>
+            Effect.fail(persistenceError("Failed to update heartbeat mode", cause)),
+          ),
+        );
+
+      return { save, load, clear, updateHeartbeatMode } as const;
     }).pipe(
       Effect.catchAllDefect((defect) =>
         Effect.gen(function* () {
