@@ -23,3 +23,26 @@ dist-ssr
 *.sln
 *.sw?
 
+# Local-only: vendored sources, agent scaffolding, and task artifacts
+src/.effect/
+src/.source/
+.agents/
+docs/
+review-*.md
+research*.md
+scout-*.md
+oracle-*.md
+progress.md
+context.md
+
+# Build artifacts and scaffolding
+.lean-ctx/
+public/
+index.html
+skills-lock.json
+handoff/
+taskplane-tasks/
+.pi/taskplane-config.json
+.pi/taskplane.json
+.pi/agents/
+

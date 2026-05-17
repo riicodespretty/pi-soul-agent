@@ -18,6 +18,14 @@ interface ResourcesDiscoverResult {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * _heartbeatCoordinator is an insurance policy against multiple closures
+ * (Pi loads extensions via jiti with moduleCache:false, creating separate
+ * closures each with independent counters). Only the first closure to
+ * reach a matching turn sends the heartbeat; the rest skip.
+ */
+const _heartbeatCoordinator = { servicedAtTurn: -1 };
+
+/**
  * Register event handlers for the heartbeat reminder.
  *
  * Injects the active soul's heartbeat content as a reminder at intervals
@@ -47,6 +55,12 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
   pi.on("turn_end", async (_event, ctx) => {
     totalTurns++;
     if (totalTurns !== nextTurnAt) return;
+
+    // Module-level dedup: if another closure already sent a heartbeat
+    // at this turn, skip. The coordinator is shared across ALL closures.
+    if (_heartbeatCoordinator.servicedAtTurn >= totalTurns) return;
+    _heartbeatCoordinator.servicedAtTurn = totalTurns;
+
     const heartbeatPipeline = Effect.gen(function* () {
       const persistence = yield* ActiveSoulPersistence;
       const activeSoul = yield* persistence.load();
@@ -82,20 +96,19 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
 
     if (!result.active) return;
 
-    pi.sendMessage(
-      {
-        customType: "soul-heartbeat-reminder",
-        content: result.content,
-        display: false,
-      },
-      {
-        deliverAs: "nextTurn",
-      },
-    );
-
     // Advance to the next bead in the mala
     intervalIndex = (intervalIndex + 1) % INTERVALS.length;
     nextTurnAt += INTERVALS[intervalIndex];
+
+    // No deliverAs option: when the agent is idle (not streaming), this
+    // appends immediately to agent.state.messages and persists to the session,
+    // rather than queueing in _pendingNextTurnMessages to be flushed on the
+    // next user message.
+    pi.sendMessage({
+      customType: "soul-heartbeat-reminder",
+      content: result.content,
+      display: false,
+    });
   });
 }
 

@@ -1,0 +1,4 @@
+# .gitignore hides dotfile directories under src/ from git;
+# .fdignore re-includes them so Pi's @ autocomplete (powered by fd)
+# can still find them.
+!src/.*
