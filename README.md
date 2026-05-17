@@ -4,7 +4,6 @@
 
 **SoulSpec persona management for [Pi Coding Agent](https://pi.dev) — rebuilt with [Effect TS](https://effect.website)**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Pi Package](https://img.shields.io/badge/pi--package-%F0%9F%93%A6-blueviolet)](https://pi.dev/packages)
 [![Effect TS](https://img.shields.io/badge/Effect_TS-v3.21-purple)](https://effect.website)
 [![Install](https://img.shields.io/badge/Install-pi%20install%20git-blue)](#installation)
@@ -13,27 +12,27 @@
 
 ---
 
-A **learning-first** fork of [`@vtstech/pi-soul`](https://pi.dev/packages/@vtstech/pi-soul) — the SoulSpec extension for Pi — rewritten from imperative Node.js into idiomatic **Effect TS**.
+A **learning-first** port of [`@vtstech/pi-soul`](https://pi.dev/packages/@vtstech/pi-soul) — the SoulSpec extension for Pi — rewritten from imperative Node.js into idiomatic **Effect TS**.
 
 This project exists to learn:
 
 - **Effect TS** — services, layers, `ManagedRuntime`, `Effect.gen`, schema, error handling, and structured concurrency
 - **Pi extension development** — events, tools, commands, and lifecycle hooks
-- **Writing Effect TS for agents** — patterns for bridging Effect pipelines into Pi's async callback world
+- **Writing Effect TS using agentic coding** — letting the agent scaffold, refactor, and iterate on Effect services while you steer; learning what prompts produce correct layers, how to verify generated Effect code, and where the agent still needs human guidance
 
 ---
 
 ## Differences from `@vtstech/pi-soul`
 
-| Aspect             | Original (`@vtstech/pi-soul`)                                  | This fork                                                     |
-| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Language**       | Imperative TypeScript (`fs.existsSync`, `JSON.parse`, classes) | Effect TS (`FileSystem`, `Schema`, `Effect.Service`, `Layer`) |
-| **Error handling** | `try/catch`, `throw new Error(...)`                            | `Schema.TaggedError`, `Effect.matchCause`, `Cause.pretty`     |
-| **File I/O**       | `fs.readFileSync`, `fs.writeFileSync`                          | `@effect/platform` `FileSystem` service                       |
-| **State**          | Module-level globals                                           | `Ref`, `Layer`-scoped services                                |
-| **Persistence**    | `fs.writeFileSync` (imperative)                                | `Effect.gen` pipeline with error mapping                      |
-| **Build tools**    | `tsconfig.compile.json`, esbuild                               | Vite+ (Vite + Rolldown + Oxlint)                              |
-| **Heartbeat**      | Loaded into system prompt at level 3                           | Loaded plus periodic **mala reminder** via `turn_end`         |
+| Aspect             | Original (`@vtstech/pi-soul`)                                  | This port                                                           |
+| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Language**       | Imperative TypeScript (`fs.existsSync`, `JSON.parse`, classes) | Effect TS (`FileSystem`, `Schema`, `Effect.Service`, `Layer`)       |
+| **Error handling** | `try/catch`, `throw new Error(...)`                            | `Data.TaggedError`, `Effect.matchCause`, `Cause.pretty`             |
+| **File I/O**       | `fs.readFileSync`, `fs.writeFileSync`                          | `@effect/platform` `FileSystem` service                             |
+| **State**          | Module-level globals                                           | `Ref`, `Layer`-scoped services                                      |
+| **Persistence**    | `fs.writeFileSync` (imperative)                                | `Effect.gen` pipeline with error mapping                            |
+| **Build tools**    | `tsconfig.compile.json`, esbuild                               | Vite+ (Vite + Rolldown + Oxlint)                                    |
+| **Heartbeat**      | Loaded into system prompt at level 3                           | Loaded plus **mala reminder** at interval thresholds via `turn_end` |
 
 ---
 
@@ -44,7 +43,7 @@ This project exists to learn:
 - Load AI agent personas defined in the [SoulSpec](https://github.com/clawsouls/soulspec) format
 - Progressive disclosure (levels 1–3): metadata → core persona → full behavior
 - Auto-load persisted soul on session start
-- Multiple soul search paths: `~/.pi/agent/souls/`, `.pi/souls/`, `./souls/`
+- Multiple soul search paths: `~/.pi/agent/souls/`, `~/.openclaw/souls/clawsouls/`, `.pi/souls/`, `./souls/`
 
 ### Commands
 
@@ -55,27 +54,19 @@ This project exists to learn:
 | `/soul-list`               | List all available souls                          |
 | `/soul-info [--full]`      | Show active soul details                          |
 
-### Tools
+### Heartbeat System Reminders
 
-| Tool         | Description                                     |
-| ------------ | ----------------------------------------------- |
-| `load_soul`  | Load a SoulSpec persona and build system prompt |
-| `list_souls` | List all available souls                        |
-| `soul_info`  | Get detailed information about a soul           |
+When a soul defines a `HEARTBEAT.md` file and is loaded at **level 3**, the extension sends a periodic system reminder to the agent using the heartbeat content. It fires on `turn_end` at cumulative turn thresholds that follow a Buddhist [mala](https://en.wikipedia.org/wiki/Japamala):
 
-### Heartbeat Mala 🪷
+| Turn | Interval | Bead     | Meaning                                            |
+| ---- | -------- | -------- | -------------------------------------------------- |
+| 6    | 6        | Senses   | Touch, taste, smell, sight, hearing, consciousness |
+| 9    | 3        | Feelings | Pleasant, unpleasant, neutral                      |
+| 11   | 2        | States   | Attached, or detached                              |
+| 14   | 3        | Times    | Past, present, future                              |
+| 20   | 6        | Senses   | — cycle repeats —                                  |
 
-When a soul is activated at **level 3** and defines heartbeat content, a periodic reminder is injected via `pi.sendMessage` on every 3rd `turn_end`, following a Buddhist mala cycle:
-
-| Turn | Bead       | Meaning                                            |
-| ---- | ---------- | -------------------------------------------------- |
-| 6    | 6 Senses   | Touch, taste, smell, sight, hearing, consciousness |
-| 9    | 3 Feelings | Pleasant, unpleasant, neutral                      |
-| 11   | 2 States   | Attached or free                                   |
-| 14   | 3 Times    | Past, present, future                              |
-| 20   | 6 Senses   | — cycle repeats —                                  |
-
-The intervals (6 × 3 × 2 × 3) multiply to **108**, the classic Buddhist mala count. The counter persists across the full session (reset on `session_start`).
+The four intervals multiplied — 6 × 3 × 2 × 3 = **108** beads, represents the total landscape of mental disturbances ([kleshas](<https://en.wikipedia.org/wiki/Kleshas_(Buddhism)>)) that must be overcome to reach enlightenment. The counter runs across the full session, resetting only on `session_start`. The reminder is hidden from the user — the agent sees it in its message history but the TUI stays clean.
 
 ---
 
@@ -98,6 +89,22 @@ Place in `.pi/extensions/soul.ts` and Pi auto-discovers it.
 
 ---
 
+## Installing Souls
+
+Browse and install community souls from [clawsouls.ai/souls](https://clawsouls.ai/souls) using the ClawSouls CLI:
+
+```bash
+# Install the CLI
+bun i -g clawsouls
+
+# Or use directly via npx
+bunx clawsouls install clawsouls/surgical-coder
+```
+
+Installed souls land in `~/.openclaw/souls/clawsouls/` — one of the four search paths this extension scans automatically. No additional configuration needed.
+
+---
+
 ## Soul Locations
 
 The extension searches for souls in the following directories (first match wins):
@@ -111,7 +118,7 @@ The extension searches for souls in the following directories (first match wins)
 
 ```
 ~/.pi/agent/souls/
-└── my-persona/
+└── bodhisattva-coder/
     ├── soul.json       # Required: Soul manifest
     ├── SOUL.md         # Required: Core persona
     ├── IDENTITY.md     # Optional: Identity information
@@ -121,21 +128,24 @@ The extension searches for souls in the following directories (first match wins)
     └── USER_TEMPLATE.md
 ```
 
-### Manifest Format (soul.json)
+### Example Manifest Format (soul.json)
+
+The full SoulSpec schema is documented at [clawsouls/soulspec](https://github.com/clawsouls/soulspec/blob/main/soulspec/clawspec.md).
 
 ```json
 {
   "specVersion": "0.5",
-  "name": "my-persona",
-  "displayName": "My Persona",
-  "description": "A helpful coding assistant",
+  "name": "bodhisattva-coder",
+  "displayName": "Bodhisattva Coder 🪷",
+  "version": "1.0.0",
+  "description": "Surgical coder rooted in the bodhisattva vow.",
+  "category": "development",
   "files": {
     "soul": "SOUL.md",
     "identity": "IDENTITY.md",
-    "heartbeat": "HEARTBEAT.md"
-  },
-  "disclosure": {
-    "summary": "Friendly coding assistant"
+    "agents": "AGENTS.md",
+    "heartbeat": "HEARTBEAT.md",
+    "style": "STYLE.md"
   }
 }
 ```
@@ -169,12 +179,12 @@ Each Pi event handler runs an `Effect.gen` pipeline, bridges it to Pi's callback
 
 ### Event Handlers
 
-| Event                        | Handler                                  |
-| ---------------------------- | ---------------------------------------- |
-| `session_start`              | Preloads persisted active soul           |
-| `resources_discover`         | Exposes soul directories as prompt paths |
-| `before_agent_start`         | Injects active soul into system prompt   |
-| `session_start` / `turn_end` | Heartbeat mala reminder (level 3 only)   |
+| Event                                         | Handler                                                       |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| `session_start`                               | Preloads persisted active soul                                |
+| `resources_discover`                          | Exposes soul directories as prompt paths                      |
+| `before_agent_start`                          | Injects active soul into system prompt                        |
+| `turn_end` (counter reset on `session_start`) | Heartbeat mala reminder at interval thresholds (level 3 only) |
 
 ---
 
@@ -184,8 +194,8 @@ Each Pi event handler runs an `Effect.gen` pipeline, bridges it to Pi's callback
 git clone <repo>
 cd pi-soul-agent
 vp install
-vp check
-vp test
+vp check        # format, lint, type-check
+bun test        # or: node node_modules/vitest/vitest.mjs run
 ```
 
 ### Project Structure
@@ -212,4 +222,4 @@ pi-soul-agent/
 
 ## License
 
-MIT — fork of [`@vtstech/pi-soul`](https://pi.dev/packages/@vtstech/pi-soul) (MIT) by [VTSTech](https://github.com/VTSTech).
+MIT — port of [`@vtstech/pi-soul`](https://pi.dev/packages/@vtstech/pi-soul) (MIT) by [VTSTech](https://github.com/VTSTech).
