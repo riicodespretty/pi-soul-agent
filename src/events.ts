@@ -66,6 +66,10 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       if (!Option.isSome(activeSoul)) return { active: false as const };
 
       const soul = activeSoul.value;
+
+      // Eager exit: if heartbeat is disabled in persistence, skip entirely
+      if (soul.heartbeatMode === "off") return { active: false as const };
+
       // heartbeatContent is only available at level >= 3
       if (soul.level < 3) return { active: false as const };
 
