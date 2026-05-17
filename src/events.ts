@@ -145,7 +145,7 @@ export function registerSessionStartHandler(pi: ExtensionAPI, runtime: AppRuntim
         const soul = activeSoul.value;
         const loader = yield* SoulSpecLoader;
         const result = yield* loader.getSoul(soul.soul, soul.level);
-        notifyUI(ctx, `Soul auto-loaded: ${result.name}`, "info");
+        notifyUI(ctx, `Soul auto-loaded: ${result.displayName}`, "info");
       } else {
         const loader = yield* SoulSpecLoader;
         const souls = yield* loader.listSouls();
