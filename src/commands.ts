@@ -4,6 +4,7 @@ import type { AppRuntime, ParsedSoulCommand, SoulManifest } from "@/src/types";
 import { SoulSpecLoader } from "@/src/loader";
 import { ActiveSoulPersistence } from "@/src/persistence";
 import { buildSystemPrompt } from "@/src/system-prompt";
+import { notifyUI } from "@/src/helpers/notify-ui";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Pure Parsing
@@ -69,12 +70,12 @@ export function registerSoulListCommand(pi: ExtensionAPI, runtime: AppRuntime): 
       );
 
       if (result._tag === "error") {
-        ctx.ui.notify(result.message, "error");
+        notifyUI(ctx, result.message, "error");
         return;
       }
 
       if (result.souls.length === 0) {
-        ctx.ui.notify("No souls found. Create a souls/ directory with soul.json files.", "error");
+        notifyUI(ctx, "No souls found. Create a souls/ directory with soul.json files.", "error");
         return;
       }
 
@@ -83,7 +84,8 @@ export function registerSoulListCommand(pi: ExtensionAPI, runtime: AppRuntime): 
         const namePart = s.displayName === s.name ? s.name : `${s.name} — ${s.displayName}`;
         return summary ? `${namePart}\n  ${summary}` : namePart;
       });
-      ctx.ui.notify(lines.join("\n"), "info");
+
+      notifyUI(ctx, lines.join("\n"), "info");
     },
   });
 }
@@ -138,7 +140,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           "  /soul developer --level 3  (full disclosure)",
           "  /soul --clear, -c          (deactivate current soul)",
         ].join("\n");
-        ctx.ui.notify(helpMsg, "info");
+        notifyUI(ctx, helpMsg, "info");
         return;
       }
 
@@ -159,11 +161,11 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         );
 
         if (result._tag === "error") {
-          ctx.ui.notify(result.message, "error");
+          notifyUI(ctx, result.message, "error");
           return;
         }
 
-        ctx.ui.notify("Soul deactivated. No soul will auto-load in future sessions.", "info");
+        notifyUI(ctx, "Soul deactivated. No soul will auto-load in future sessions.", "info");
         return;
       }
 
@@ -185,7 +187,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         );
 
         if (result._tag === "error") {
-          ctx.ui.notify(result.message, "error");
+          notifyUI(ctx, result.message, "error");
           return;
         }
 
@@ -197,7 +199,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           if (summary) msg += `\n    ${summary}`;
         }
         msg += "\n\nUse /soul --clear (or -c) to deactivate the active soul.";
-        ctx.ui.notify(msg, "error");
+        notifyUI(ctx, msg, "error");
         return;
       }
 
@@ -226,11 +228,12 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       );
 
       if (result._tag === "error") {
-        ctx.ui.notify(result.message, "error");
+        notifyUI(ctx, result.message, "error");
         return;
       }
 
-      ctx.ui.notify(
+      notifyUI(
+        ctx,
         `Now using soul: ${result.manifest.displayName} (level ${parsed.level}). This soul will auto-load in future sessions.`,
         "info",
       );
@@ -302,12 +305,12 @@ export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): 
       );
 
       if (result._tag === "error") {
-        ctx.ui.notify(result.message, "error");
+        notifyUI(ctx, result.message, "error");
         return;
       }
 
       if (result._tag === "inactive") {
-        ctx.ui.notify("No active soul. Use /soul <name> to activate one.", "info");
+        notifyUI(ctx, "No active soul. Use /soul <name> to activate one.", "info");
         return;
       }
 
@@ -327,7 +330,7 @@ export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): 
         msg += `\n\n--- Full System Prompt ---\n\n${systemPrompt}`;
       }
 
-      ctx.ui.notify(msg, "info");
+      notifyUI(ctx, msg, "info");
     },
   });
 }
