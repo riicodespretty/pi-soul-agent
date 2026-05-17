@@ -88,7 +88,10 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           const defectDesc = Cause.pretty(Cause.die(defect));
           yield* logError("persistence", "Defect in ActiveSoulPersistence", defectDesc);
           return yield* Effect.fail(
-            persistenceError(`[persistence] Defect in ActiveSoulPersistence`, defectDesc),
+            persistenceError(
+              `[persistence] Defect in ActiveSoulPersistence: ${defectDesc}`,
+              defectDesc,
+            ),
           );
         }),
       ),

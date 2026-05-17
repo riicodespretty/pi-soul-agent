@@ -254,7 +254,9 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       Effect.gen(function* () {
         const defectDesc = Cause.pretty(Cause.die(defect));
         yield* logError("loader", "Defect in SoulSpecLoader", defectDesc);
-        return yield* Effect.fail(soulLoadError(`[loader] Defect in SoulSpecLoader`, defectDesc));
+        return yield* Effect.fail(
+          soulLoadError(`[loader] Defect in SoulSpecLoader: ${defectDesc}`, defectDesc),
+        );
       }),
     ),
   ),
