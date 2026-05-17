@@ -104,10 +104,12 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
     // lite: single 6-interval (every 6 turns)
     // full: full mala cycle [6, 3, 2, 3]
     const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
+      off: [],
       lite: [6],
       full: [6, 3, 2, 3],
     };
     const intervals = HEARTBEAT_INTERVALS[result.mode];
+    if (intervals.length === 0) return; // off mode — no heartbeat
     intervalIndex = (intervalIndex + 1) % intervals.length;
     nextTurnAt += intervals[intervalIndex];
 

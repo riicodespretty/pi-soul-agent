@@ -290,7 +290,7 @@ export interface WritableSoulManifestProps {
 export interface SoulManifest extends WritableSoulManifestProps, SoulManifestData {}
 
 /** Schema for persisted active soul entry (runtime data, not from soul.json). */
-export const HeartbeatModeSchema = S.Literal("lite", "full");
+export const HeartbeatModeSchema = S.Literal("off", "lite", "full");
 export type HeartbeatMode = S.Schema.Type<typeof HeartbeatModeSchema>;
 
 export const ActiveSoulSchema = S.Struct({

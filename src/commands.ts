@@ -29,10 +29,10 @@ export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
     return { action: "deactivate" };
   }
 
-  // Heartbeat mode (--heartbeat lite|full)
-  const hbMatch = /^--heartbeat\s+(lite|full)$/i.exec(trimmed);
+  // Heartbeat mode (--heartbeat off|lite|full)
+  const hbMatch = /^--heartbeat\s+(off|lite|full)$/i.exec(trimmed);
   if (hbMatch) {
-    return { action: "heartbeat", mode: hbMatch[1].toLowerCase() as "lite" | "full" };
+    return { action: "heartbeat", mode: hbMatch[1].toLowerCase() as "off" | "lite" | "full" };
   }
 
   // Parse optional --level flag using Option (match can return null)
@@ -125,6 +125,11 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
             label: "full",
             description: "Full mala cycle (Every 6→3→2→3 turns)",
           },
+          {
+            value: "--heartbeat off",
+            label: "off",
+            description: "Disable heartbeat reminders",
+          },
         ];
       }
 
@@ -154,14 +159,15 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         const helpMsg = [
           "Usage: /soul <name> [--level N]",
           "       /soul --clear (or -c)",
-          "       /soul --heartbeat lite|full",
+          "       /soul --heartbeat off|lite|full",
           "",
           "Load and activate a SoulSpec persona.",
           "  --level N    Progressive disclosure level (1-3, default 2)",
           "",
           "Heartbeat mode:",
-          "  --heartbeat lite   Every 6 turns (default, ~2.4 tok/turn)",
-          "  --heartbeat full   Full mala cycle 6→3→2→3 (~3.5 avg, ~6.9 tok/turn)",
+          "  --heartbeat off    Disable heartbeat reminders",
+          "  --heartbeat lite   Every 6 turns (default)",
+          "  --heartbeat full   Full mala cycle 6→3→2→3",
           "",
           "Tab-completion shows available souls with descriptions.",
           "",
