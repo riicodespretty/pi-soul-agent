@@ -125,7 +125,7 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
     // system reminder rather than a direct user message.
     pi.sendMessage({
       customType: "soul-heartbeat-reminder",
-      content: `<soul-heartbeat-reminder>\n${result.content}\n</soul-heartbeat-reminder>`,
+      content: `<soul-heartbeat-reminder type="grounding" no-response>\n${result.content}\n</soul-heartbeat-reminder>`,
       display: false,
     });
   });
