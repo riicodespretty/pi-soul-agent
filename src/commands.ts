@@ -109,28 +109,31 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
     description:
       "Activate a soul (/soul <name> [--level N]) or deactivate (/soul --clear, -c). Use /soul --help for details.",
     getArgumentCompletions: async (prefix: string) => {
-      // Suggest --heartbeat flags
-      if (
-        "--heartbeat ".startsWith(prefix) ||
-        "--heartbeat ".toLowerCase().startsWith(prefix.toLowerCase())
-      ) {
-        return [
-          {
-            value: "--heartbeat lite",
-            label: "lite",
-            description: "Every 6 turns",
-          },
-          {
-            value: "--heartbeat full",
-            label: "full",
-            description: "Full mala cycle (Every 6→3→2→3 turns)",
-          },
-          {
-            value: "--heartbeat off",
-            label: "off",
-            description: "Disable heartbeat reminders",
-          },
-        ];
+      // Only suggest --heartbeat flags when user is typing a flag (starts with --)
+      if (prefix.startsWith("--")) {
+        if (
+          "--heartbeat ".startsWith(prefix) ||
+          "--heartbeat ".toLowerCase().startsWith(prefix.toLowerCase())
+        ) {
+          return [
+            {
+              value: "--heartbeat lite",
+              label: "lite",
+              description: "Every 6 turns",
+            },
+            {
+              value: "--heartbeat full",
+              label: "full",
+              description: "Full mala cycle (Every 6→3→2→3 turns)",
+            },
+            {
+              value: "--heartbeat off",
+              label: "off",
+              description: "Disable heartbeat reminders",
+            },
+          ];
+        }
+        return [];
       }
 
       const listSoulsPipeline = Effect.gen(function* () {
