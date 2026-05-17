@@ -110,12 +110,33 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       "Activate a soul (/soul <name> [--level N]) or deactivate (/soul --clear, -c). Use /soul --help for details.",
     getArgumentCompletions: async (prefix: string) => {
       // Only suggest --heartbeat flags when user is typing a flag (starts with --)
-      if (prefix.startsWith("--")) {
+      if (prefix.startsWith("-")) {
+        const flagCompletions = [];
+
+        // Suggest --clear (deactivate)
+        if ("--clear".startsWith(prefix) || "-c".startsWith(prefix)) {
+          flagCompletions.push({
+            value: "--clear",
+            label: "--clear, -c",
+            description: "Deactivate current soul",
+          });
+        }
+
+        // Suggest --help
+        if ("--help".startsWith(prefix) || "-h".startsWith(prefix)) {
+          flagCompletions.push({
+            value: "--help",
+            label: "--help, -h",
+            description: "Show soul command help",
+          });
+        }
+
+        // Suggest --heartbeat flags
         if (
           "--heartbeat ".startsWith(prefix) ||
           "--heartbeat ".toLowerCase().startsWith(prefix.toLowerCase())
         ) {
-          return [
+          flagCompletions.push(
             {
               value: "--heartbeat lite",
               label: "lite",
@@ -131,9 +152,10 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
               label: "off",
               description: "Disable heartbeat reminders",
             },
-          ];
+          );
         }
-        return [];
+
+        return flagCompletions;
       }
 
       const listSoulsPipeline = Effect.gen(function* () {
