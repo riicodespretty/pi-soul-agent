@@ -21,13 +21,16 @@ import {
  * Requirements are satisfied by providing NodeFileSystem + NodePath layers.
  */
 const runtime = ManagedRuntime.make(
-  Layer.mergeAll(
-    SoulSpecLoader.Default,
-    ActiveSoulPersistence.Default,
-    LoggerLayer,
-    NodeFileSystem.layer,
-    NodePathLayer,
-    // oxc can't infer the Exclude<Requirements, Outputs> type here
+  SoulSpecLoader.Default.pipe(
+    Layer.provideMerge(NodeFileSystem.layer),
+    Layer.provideMerge(NodePathLayer),
+    Layer.provideMerge(
+      ActiveSoulPersistence.Default.pipe(
+        Layer.provideMerge(NodeFileSystem.layer),
+        Layer.provideMerge(NodePathLayer),
+      ),
+    ),
+    Layer.provideMerge(LoggerLayer),
   ) as unknown as Layer.Layer<any, any, never>,
 );
 
