@@ -1,5 +1,5 @@
-import type { SoulManifest } from "@/src/types";
-import { Environment, InteractionMode } from "@/src/types";
+import type { SoulManifest } from "./types";
+import { Environment, InteractionMode } from "./types";
 import { Option } from "effect";
 
 /**

@@ -1,9 +1,9 @@
 import { Cause, Effect, Option, Ref } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import type { SoulManifest, WritableSoulManifestProps } from "@/src/types";
-import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "@/src/errors";
-import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
-import { logError } from "@/src/logger";
+import type { SoulManifest, WritableSoulManifestProps } from "./types";
+import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "./errors";
+import { expandHome, parseManifest, readJsonFile, readTextFile } from "./services/soul-fs";
+import { logError } from "./logger";
 
 /** Soul search paths (with tilde — expanded at runtime) */
 export const SOUL_SEARCH_PATHS = [

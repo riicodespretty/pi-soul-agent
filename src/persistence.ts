@@ -1,9 +1,9 @@
 import { Cause, Effect, Option, Schema as S } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import { ActiveSoulSchema, type ActiveSoul } from "@/src/types";
-import { FileSystemError } from "@/src/errors";
-import { expandHome, readJsonFile } from "@/src/services/soul-fs";
-import { logError } from "@/src/logger";
+import { ActiveSoulSchema, type ActiveSoul } from "./types";
+import { FileSystemError } from "./errors";
+import { expandHome, readJsonFile } from "./services/soul-fs";
+import { logError } from "./logger";
 import { Path } from "@effect/platform/Path";
 
 /** Persistence file path (tilde expanded at runtime) */

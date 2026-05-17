@@ -2,8 +2,8 @@ import { Effect, Option, Schema as S } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
 import { Path } from "@effect/platform/Path";
 import os from "node:os";
-import { SoulManifestDataSchema, type SoulManifest } from "@/src/types";
-import { FileSystemError, ManifestParseError } from "@/src/errors";
+import { SoulManifestDataSchema, type SoulManifest } from "../types";
+import { FileSystemError, ManifestParseError } from "../errors";
 
 // ── Helpers ──
 

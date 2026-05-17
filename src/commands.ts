@@ -1,10 +1,10 @@
 import { Cause, Effect, Option, pipe } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime, ParsedSoulCommand, SoulManifest } from "@/src/types";
-import { SoulSpecLoader } from "@/src/loader";
-import { ActiveSoulPersistence } from "@/src/persistence";
-import { buildSystemPrompt } from "@/src/system-prompt";
-import { notifyUI } from "@/src/helpers/notify-ui";
+import type { AppRuntime, ParsedSoulCommand, SoulManifest } from "./types";
+import { SoulSpecLoader } from "./loader";
+import { ActiveSoulPersistence } from "./persistence";
+import { buildSystemPrompt } from "./system-prompt";
+import { notifyUI } from "./helpers/notify-ui";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Pure Parsing
