@@ -31,8 +31,3 @@ scout-*.md
 oracle-*.md
 progress.md
 context.md
-
-# Vendored sources and local tooling
-src/.effect/
-src/.source/
-.agents/
