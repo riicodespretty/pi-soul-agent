@@ -3,6 +3,7 @@ import { FileSystem } from "@effect/platform/FileSystem";
 import type { SoulManifest, WritableSoulManifestProps } from "@/src/types";
 import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "@/src/errors";
 import { expandHome, parseManifest, readJsonFile, readTextFile } from "@/src/services/soul-fs";
+import { logError } from "@/src/logger";
 
 /** Soul search paths (with tilde — expanded at runtime) */
 export const SOUL_SEARCH_PATHS = [
@@ -254,13 +255,9 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
   }).pipe(
     Effect.catchAllDefect((defect) =>
       Effect.gen(function* () {
-        const message = [
-          `[loader] Defect in SoulSpecLoader`,
-          Cause.pretty(Cause.die(defect)),
-        ] as const;
-
-        yield* Effect.logError(...message);
-        return yield* Effect.fail(soulLoadError(...message));
+        const defectDesc = Cause.pretty(Cause.die(defect));
+        yield* logError("loader", "Defect in SoulSpecLoader", defectDesc);
+        return yield* Effect.fail(soulLoadError(`[loader] Defect in SoulSpecLoader`, defectDesc));
       }),
     ),
   ),
