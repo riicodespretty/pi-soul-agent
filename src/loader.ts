@@ -66,13 +66,10 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
     const cache = yield* Ref.make<Map<string, CacheEntry>>(new Map());
 
     // ── Internal helpers ─────────────────────────────────────────────────────────
-
-    const expandHomeDir = expandHome;
-
     const resolveSoulPath = (soulName: string) => {
       return Effect.gen(function* () {
         for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = yield* expandHomeDir(base);
+          const resolvedBase = yield* expandHome(base);
           const exactPath = `${resolvedBase}/${soulName}/soul.json`;
           const exists = yield* fs.exists(exactPath);
           if (exists) {
@@ -170,7 +167,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         const results: SoulManifest[] = [];
 
         for (const base of SOUL_SEARCH_PATHS) {
-          const resolvedBase = yield* expandHomeDir(base);
+          const resolvedBase = yield* expandHome(base);
           const soulNames = yield* fs.readDirectory(resolvedBase);
 
           for (const soulName of soulNames) {
