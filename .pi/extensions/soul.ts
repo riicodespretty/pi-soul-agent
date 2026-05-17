@@ -27,7 +27,8 @@ const runtime = ManagedRuntime.make(
     LoggerLayer,
     NodeFileSystem.layer,
     NodePathLayer,
-  ) as any,
+    // oxc can't infer the Exclude<Requirements, Outputs> type here
+  ) as unknown as Layer.Layer<any, any, never>,
 );
 
 /**
