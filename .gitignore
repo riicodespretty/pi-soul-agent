@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Vendored / local-only directories
+.agents/
+src/.effect/
+src/.source/
