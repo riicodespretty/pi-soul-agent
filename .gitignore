@@ -23,11 +23,3 @@ dist-ssr
 *.sln
 *.sw?
 
-# Docs and scratchpads (local only, not tracked in git)
-docs/
-review-*.md
-research*.md
-scout-*.md
-oracle-*.md
-progress.md
-context.md
