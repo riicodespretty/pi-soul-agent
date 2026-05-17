@@ -18,21 +18,21 @@ This project exists to learn:
 
 - **Effect TS** — services, layers, `ManagedRuntime`, `Effect.gen`, schema, error handling, and structured concurrency
 - **Pi extension development** — events, tools, commands, and lifecycle hooks
-- **Writing Effect TS using agentic coding** — letting the agent scaffold, refactor, and iterate on Effect services while you steer; learning what prompts produce correct layers, how to verify generated Effect code, and where the agent still needs human guidance
+- **Writing Effect TS using agentic coding** — letting the agent scaffold, refactor, and iterate on Effect services while I steer; learning what prompts produce correct layers, how to verify generated Effect code, and where the agent still needs human guidance
 
 ---
 
 ## Differences from `@vtstech/pi-soul`
 
-| Aspect             | Original (`@vtstech/pi-soul`)                                  | This port                                                           |
-| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------- |
-| **Language**       | Imperative TypeScript (`fs.existsSync`, `JSON.parse`, classes) | Effect TS (`FileSystem`, `Schema`, `Effect.Service`, `Layer`)       |
-| **Error handling** | `try/catch`, `throw new Error(...)`                            | `Data.TaggedError`, `Effect.matchCause`, `Cause.pretty`             |
-| **File I/O**       | `fs.readFileSync`, `fs.writeFileSync`                          | `@effect/platform` `FileSystem` service                             |
-| **State**          | Module-level globals                                           | `Ref`, `Layer`-scoped services                                      |
-| **Persistence**    | `fs.writeFileSync` (imperative)                                | `Effect.gen` pipeline with error mapping                            |
-| **Build tools**    | `tsconfig.compile.json`, esbuild                               | Vite+ (Vite + Rolldown + Oxlint)                                    |
-| **Heartbeat**      | Loaded into system prompt at level 3                           | Loaded plus **mala reminder** at interval thresholds via `turn_end` |
+| Aspect             | Original (`@vtstech/pi-soul`)                                  | This port                                                     |
+| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| **Language**       | Imperative TypeScript (`fs.existsSync`, `JSON.parse`, classes) | Effect TS (`FileSystem`, `Schema`, `Effect.Service`, `Layer`) |
+| **Error handling** | `try/catch`, `throw new Error(...)`                            | `Data.TaggedError`, `Effect.matchCause`, `Cause.pretty`       |
+| **File I/O**       | `fs.readFileSync`, `fs.writeFileSync`                          | `@effect/platform` `FileSystem` service                       |
+| **State**          | Module-level globals                                           | `Ref`, `Layer`-scoped services                                |
+| **Persistence**    | `fs.writeFileSync` (imperative)                                | `Effect.gen` pipeline with error mapping                      |
+| **Build tools**    | `tsconfig.compile.json`, esbuild                               | Vite+ (Vite + Rolldown + Oxlint)                              |
+| **Heartbeat**      | Loaded into system prompt at level 3                           | Sent as periodic system reminders via `turn_end`              |
 
 ---
 
@@ -75,7 +75,7 @@ The four intervals multiplied — 6 × 3 × 2 × 3 = **108** bea
 ### As a Pi package (recommended)
 
 ```bash
-pi install git:github.com/<your-org>/pi-soul-agent
+pi install git:github.com/riicodespretty/pi-soul-agent
 ```
 
 ### Manual (project-local)
