@@ -1,6 +1,6 @@
 import { Effect, Option, Schema as S } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
-import { Path } from "@effect/platform";
+import { Path } from "@effect/platform/Path";
 import os from "node:os";
 import { SoulManifestDataSchema, type SoulManifest } from "@/src/types";
 import { FileSystemError, ManifestParseError } from "@/src/errors";
@@ -17,7 +17,7 @@ export function resolveOsHomeDir(env: NodeJS.ProcessEnv) {
 export function expandHome(p: string) {
   if (!p.startsWith("~/")) return Effect.succeed(p);
   return Effect.gen(function* () {
-    const path = yield* Path.Path;
+    const path = yield* Path;
     return path.join(resolveOsHomeDir(process.env), p.slice(2));
   });
 }
