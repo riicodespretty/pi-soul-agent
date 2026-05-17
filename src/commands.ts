@@ -268,7 +268,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
 export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): void {
   pi.registerCommand("soul-info", {
     description:
-      "Show active soul info. Add --full (or -f) to display the full generated system prompt.",
+      "Show active soul info: name, summary, path, level. Add --full (or -f) for the full system prompt.",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const showFull = args.trim() === "--full" || args.trim() === "-f";
 
@@ -318,16 +318,16 @@ export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): 
       const summary = manifest.disclosure?.summary ?? manifest.description ?? "";
       const namePart =
         manifest.displayName !== manifest.name
-          ? `${manifest.name} \u2014 ${manifest.displayName}`
+          ? `${manifest.name} — ${manifest.displayName}`
           : manifest.name;
 
-      let msg = `\u2022 **${namePart}**`;
+      let msg = `Active soul: ${namePart}`;
       if (summary) msg += `\n  ${summary}`;
-      msg += `\n  Path: ${soulPath}`;
-      msg += `\n  Level: ${level}`;
+      msg += `\nPath: ${soulPath}`;
+      msg += `\nLevel: ${level}`;
 
       if (systemPrompt) {
-        msg += `\n\n--- Full System Prompt ---\n\n${systemPrompt}`;
+        msg += `\n\n${systemPrompt}`;
       }
 
       notifyUI(ctx, msg, "info");

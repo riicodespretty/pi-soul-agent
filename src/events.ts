@@ -13,6 +13,96 @@ interface ResourcesDiscoverResult {
   promptPaths?: string[];
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Heartbeat Reminder
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Register event handlers for the heartbeat reminder.
+ *
+ * Injects the active soul's heartbeat content as a reminder at intervals
+ * following a Buddhist mala: 6 (senses) → 3 (feelings) → 2 (states) → 3 (times),
+ * cycling across the full session.
+ *
+ * The mala cycles through 6 Senses → 3 Feelings → 2 States → 3 Times,
+ * which together multiply to 108 — the classic Buddhist mala count.
+ * The counter persists across the full session (reset on `session_start`),
+ * so each turn throughout the conversation advances the mala.
+ *
+ * First heartbeat at turn 6 — spacious enough to ground into the work
+ * before the first check-in arrives.
+ */
+export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppRuntime): void {
+  const INTERVALS = [6, 3, 2, 3] as const;
+  let intervalIndex = 0;
+  let nextTurnAt = INTERVALS[0];
+  let totalTurns = 0;
+
+  pi.on("session_start", async () => {
+    intervalIndex = 0;
+    nextTurnAt = INTERVALS[0];
+    totalTurns = 0;
+  });
+
+  pi.on("turn_end", async (_event, ctx) => {
+    totalTurns++;
+    if (totalTurns !== nextTurnAt) return;
+    const heartbeatPipeline = Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      const activeSoul = yield* persistence.load();
+      if (!Option.isSome(activeSoul)) return { active: false as const };
+
+      const soul = activeSoul.value;
+      // heartbeatContent is only available at level >= 3
+      if (soul.level < 3) return { active: false as const };
+
+      const loader = yield* SoulSpecLoader;
+      const manifest = yield* loader.getSoul(soul.soul, soul.level);
+
+      const content = Option.fromNullable(manifest.heartbeatContent);
+      if (Option.isNone(content)) return { active: false as const };
+
+      return { active: true as const, content: content.value };
+    });
+
+    const result = await runtime.runPromise(
+      Effect.matchCause(heartbeatPipeline, {
+        onSuccess: (value) => ({ _tag: "success" as const, ...value }),
+        onFailure: (cause) => ({
+          _tag: "error" as const,
+          message: `Heartbeat reminder error: ${Cause.pretty(cause)}`,
+        }),
+      }),
+    );
+
+    if (result._tag === "error") {
+      notifyUI(ctx, result.message, "warning");
+      return;
+    }
+
+    if (!result.active) return;
+
+    pi.sendMessage(
+      {
+        customType: "soul-heartbeat-reminder",
+        content: result.content,
+        display: false,
+      },
+      {
+        deliverAs: "nextTurn",
+      },
+    );
+
+    // Advance to the next bead in the mala
+    intervalIndex = (intervalIndex + 1) % INTERVALS.length;
+    nextTurnAt += INTERVALS[intervalIndex];
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Start
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
  * Register the `session_start` event handler.
  * Checks for a persisted active soul and preloads it on startup/new sessions.

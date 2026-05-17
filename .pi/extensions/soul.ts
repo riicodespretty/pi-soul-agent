@@ -14,6 +14,7 @@ import {
   registerSessionStartHandler,
   registerResourcesDiscoverHandler,
   registerBeforeAgentStartHandler,
+  registerHeartbeatReminderHandler,
 } from "../../src/events";
 
 /**
@@ -31,7 +32,7 @@ const runtime = ManagedRuntime.make(
       ),
     ),
     Layer.provideMerge(LoggerLayer),
-  ) as unknown as Layer.Layer<any, any, never>,
+  ),
 );
 
 /**
@@ -49,4 +50,5 @@ export default function piSoulAgent(pi: ExtensionAPI) {
   registerSessionStartHandler(pi, runtime);
   registerResourcesDiscoverHandler(pi, runtime);
   registerBeforeAgentStartHandler(pi, runtime);
+  registerHeartbeatReminderHandler(pi, runtime);
 }

@@ -31,29 +31,29 @@ export function buildSystemPrompt(manifest: SoulManifest, level: number = 2): st
     );
 
   // ── Level 1: Basic info ─────────────────────────────────────────────────────
-  push("# ", manifest.displayName, 1);
-  push("\n", manifest.description, 1);
-  push("\n", manifest.disclosure?.summary, 1);
+  if (level < 2) {
+    push("# ", manifest.displayName, 1);
+    push("\n", manifest.disclosure?.summary ?? manifest.description, 1);
+  }
 
   // ── Level 2: Core persona ─────────────────────────────────────────────────────
-  push("\n\n## Persona\n\n", manifest.soulContent, 2);
-  push("\n\n## Identity\n\n", manifest.identityContent, 2);
+  push("\n\n── Personality\n\n", manifest.soulContent, 2);
+  push("\n\n── Identity\n\n", manifest.identityContent, 2);
 
   // ── Level 3: Extended behavior ────────────────────────────────────────────────
-  push("\n\n## Style Guidelines\n\n", manifest.styleContent, 3);
-  push("\n\n## Agent Behavior\n\n", manifest.agentsContent, 3);
-  push("\n\n## Heartbeat\n\n", manifest.heartbeatContent, 3);
-  push("\n\n## User Message Template\n\n", manifest.userTemplateContent, 3);
+  push("\n\n── Style Guidelines\n\n", manifest.styleContent, 3);
+  push("\n\n── Agent Behavior\n\n", manifest.agentsContent, 3);
+  push("\n\n── User Message Template\n\n", manifest.userTemplateContent, 3);
 
   // ── Calibration examples ──────────────────────────────────────────────────────
   push(
-    "\n\n## Calibration Examples",
+    "\n\n── Calibration Examples",
     "",
     3,
     Boolean(manifest.examplesGoodContent ?? manifest.examplesBadContent),
   );
-  push("\n\n### Good Outputs\n\n", manifest.examplesGoodContent, 3);
-  push("\n\n### Outputs to Avoid\n\n", manifest.examplesBadContent, 3);
+  push("\n\n── Good Outputs\n\n", manifest.examplesGoodContent, 3);
+  push("\n\n── Outputs to Avoid\n\n", manifest.examplesBadContent, 3);
 
   // ── Environment: embodied agent constraints ───────────────────────────────────
 
@@ -76,7 +76,7 @@ export function buildSystemPrompt(manifest: SoulManifest, level: number = 2): st
 
   const envActive = manifest.environment !== Environment.VIRTUAL;
 
-  push(`\n\n## Environment\n`, `You are an **${manifest.environment}** agent.`, 1, envActive);
+  push(`\n\n── Environment\n`, `You are an **${manifest.environment}** agent.`, 1, envActive);
 
   push(
     "\nPrimary interaction mode: ",
