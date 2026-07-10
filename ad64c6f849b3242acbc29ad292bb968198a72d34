@@ -1,0 +1,75 @@
+# docs-architecture — Architecture area
+#
+# File index:
+#   docs/architecture/overview.md — module map, event-handler bridge, wiring, findings
+#
+# Anchored to root commit in ref refs/notes/docs-architecture.
+
+===== FILE: docs/architecture/overview.md =====
+# pi-soul-agent — Architecture overview
+
+## Purpose & stance
+A Pi extension that manages SoulSpec personas. It is a learning port of `@vtstech/pi-soul`
+from imperative Node into idiomatic Effect TS. Effect idiom (services, layers, Schema,
+tagged errors, ManagedRuntime) is a first-class goal, not incidental.
+
+## Module map
+    .pi/extensions/soul.ts    entry: builds ManagedRuntime, wires layers, registers handlers
+    src/commands.ts           /soul, /soul-list, /soul-info
+    src/events.ts             session_start, resources_discover, before_agent_start, turn_end
+    src/loader.ts             SoulSpecLoader service (discover/parse/filter/cache)
+    src/persistence.ts        ActiveSoulPersistence service (~/.pi/agent/.active-soul.json)
+    src/system-prompt.ts      buildSystemPrompt(manifest, level) — pure assembly
+    src/types.ts              Effect Schema — source of truth for all soul.json shapes
+    src/errors.ts             5 tagged errors; only SoulLoadError escapes the loader
+    src/services/soul-fs.ts   expandHome, parseManifest, readJsonFile, readTextFile
+    src/logger.ts             LoggerLayer + log{Debug,Info,Warning,Error}
+    src/helpers/notify-ui.ts  safe ctx.ui.notify wrapper
+
+## Runtime & layers (soul.ts)
+A single ManagedRuntime is built once at module load. The layer stack provides
+SoulSpecLoader.Default + ActiveSoulPersistence.Default over NodeFileSystem.layer +
+NodePath layer + LoggerLayer.
+
+## The event-handler bridge (the repeated seam)
+Every handler follows one shape:
+  1. build an Effect.gen pipeline (yield* services, do the work);
+  2. runtime.runPromise(Effect.matchCause(pipeline, { onSuccess, onFailure }));
+  3. map the tagged result back to Pi's callback world;
+  4. surface errors via notifyUI(ctx, msg, level).
+This isolates Effect's typed-error world behind runPromise at the callback boundary.
+
+## Event handlers (events.ts)
+  session_start       preload persisted Active Soul (reason startup|new); else advertise availability
+  resources_discover  expose existing Search paths as promptPaths
+  before_agent_start  inject buildSystemPrompt(activeSoul) appended to the base system prompt
+  turn_end            heartbeat mala reminder (level-3 and heartbeatMode != off)
+
+## Commands (commands.ts)
+  /soul <name> [--level N] | off|clear | --help | --heartbeat <mode>   activate/deactivate/configure
+  /soul-list                                                            list discovered souls (level-1)
+  /soul-info [--full]                                                   show active soul; --full prints prompt
+
+## Error model (errors.ts)
+Internal: SoulNotFoundError, NoSoulsFoundError, ManifestParseError, FileSystemError.
+Public: SoulLoadError — the only error that escapes the loader API; consumers handle one
+tagged type via Effect.catchTag("SoulLoadError", ...).
+
+## Open findings (UNVERIFIED — captured 2026-07-10, no failing test written yet)
+- Heartbeat scheduler wedge (events.ts turn_end). `nextTurnAt` advances ONLY on the branch
+  where a heartbeat actually fires (result.active === true). If the scheduled turn arrives
+  while inactive (common case: no Soul active yet at turn 6), `nextTurnAt` freezes and the
+  strict gate `totalTurns !== nextTurnAt` never matches again for the rest of the session;
+  activating a level-3 Soul afterward does not recover it. Only session_start resets it.
+  Write a failing test before any fix.
+- Doc drift. loadSoul docstring says "always reads from disk — no cache lookup" but it checks
+  the cache first (loader.ts ~101-108). getSoul docstring cites path.basename cache-key
+  normalization, but Path is not imported in loader.ts. progress.md / context.md reference
+  removed symbols and already-fixed bugs.
+- Doc litter. context.md at repo root is a code-analysis scratchpad misnamed as a glossary;
+  repo root holds ~15 one-off analysis docs (oracle-*, scout-*, research*, review-*, docs/TP-*).
+- src/errors.ts and src/helpers/errors.ts both exist — possible duplication, not yet inspected.
+
+## Verified state (2026-07-10)
+- Test suite passes: 3 files, 59 tests via `node node_modules/vitest/vitest.mjs run`.
+- Clean working tree on `main`. No git notes existed before this doc set was created.
