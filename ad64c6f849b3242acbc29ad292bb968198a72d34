@@ -63,13 +63,19 @@ A hidden, periodic system reminder built from a Soul's `HEARTBEAT.md`, re-inject
 _Avoid_: ping, tick
 
 **Heartbeat mode**:
-`off` | `lite` (fire every 6 turns) | `full` (fire on the mala cadence). Stored on the
-Active Soul; defaults to `lite`.
-_Avoid_: frequency, cadence
+`off` | `lite` (every 6 turns) | `full` (the mala ramp) | a custom positive integer N
+(every N turns). All measured from the Activation anchor. Stored on the Active Soul;
+defaults to `lite`.
+_Avoid_: frequency
 
 **Mala** / **beads**:
-The Buddhist-rosary cadence `[6, 3, 2, 3]` (6 × 3 × 2 × 3 = 108 kleshas) that spaces
-`full`-mode Heartbeats.
+The cadence spacing `full`-mode Heartbeats: reminders at 6, 18, 36, 108 turns after
+activation, then every 108 thereafter (108 = 6 × 3 × 2 × 3, the full klesha count). The
+`[6, 3, 2, 3]` factors are cumulative *positions* (prefix products), not repeating gaps.
+
+**Activation anchor**:
+The moment a Soul becomes active — the zero point from which its Heartbeat schedule is
+measured. Re-anchors (the schedule restarts) whenever the Active Soul changes.
 
 **Environment**:
 A Soul's deployment context: `virtual` | `embodied` | `hybrid`. Non-virtual values unlock
