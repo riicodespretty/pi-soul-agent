@@ -2,11 +2,15 @@
 #
 # File index:
 #   docs/rationale/errors.md — error model: why SoulLoadError is the sole public error
+#   docs/rationale/events.md — heartbeat scheduler: activation anchor, gate, clamp, dedup, Pi deliverAs
+#   docs/rationale/commands.md — /soul parser: heartbeat validation, level re-read, path-aware timing
+#   docs/rationale/types.md — heartbeat mode widening (see also ADR-0001)
+#   docs/rationale/events.test.md — heartbeat test harness: model-under-test + per-case turn derivations
 #
-# Per-file "why" extracted from inline comments — design rationale that survives being
-# read away from the code. Line-local implementation comments stay in the source. Each
-# source file keeps a one-line pointer back to its section here. Anchored to root commit
-# in ref refs/notes/docs-code-rationale.
+# Per-file design rationale extracted from inline comments. Each source file keeps a
+# one-line pointer ("// Rationale [N] → …") back to the numbered block here; [N] matches
+# the block order top-to-bottom in that source file. Anchored to root commit in
+# ref refs/notes/docs-code-rationale.
 
 ===== FILE: docs/rationale/errors.md =====
 # Error model (src/errors.ts)
@@ -19,3 +23,128 @@ SoulLoadError is the ONLY error type that escapes the public loader API. All int
 errors are caught, logged, and re-mapped into it, so a consumer handles a single tagged
 type via Effect.catchTag("SoulLoadError", ...). Keeping the loader's failure surface to
 one type at the seam is the deliberate design choice this file encodes.
+
+===== FILE: docs/rationale/events.test.md =====
+# Rationale — tests/events.test.ts
+
+## [1] before: `type Handler = (event: unknown, ctx: unknown) => Promise<void> | void;`
+
+The scheduler state (currentIdentity / count / nextTurnAt) lives in a closure
+created inside registerHeartbeatReminderHandler and is reachable only through
+the pi.on("turn_end", ...) callback — there is no exported pure unit. So we
+drive the REAL handler: a fake `pi` records handlers and captures sendMessage,
+and a fake `runtime` scripts runPromise's final result shape per turn. This
+exercises the true closure/bug site.
+
+Model under test (ADR-0001): every cadence is measured from the Activation
+anchor, not session start. Each turn the handler reads the Active Soul
+identity (soul + updatedAt); when it changes, the count resets to 0 (the
+activation turn does NOT fire) and the schedule restarts. Nothing counts while
+inactive, so a scheduled turn reached while inactive can no longer wedge the
+session (issue #1 is structurally impossible, not merely patched).
+
+The handler also consults a MODULE-LEVEL singleton (`_heartbeatCoordinator`)
+that is not exported and cannot be reset from outside. We therefore reset the
+module registry and re-import the handler for each test to get a fresh
+coordinator. This is the sanctioned "module loading boundary" exception to the
+static-import rule (the source intentionally exposes no reset seam).
+
+## [2] before: `const mod = await import("../src/events");`
+Test-case exception to the static-import rule (ts-no-dynamic-import): we need
+a FRESH module instance per test to reset the module-level
+_heartbeatCoordinator singleton, for which the source intentionally exposes
+no reset seam. The specifier is a literal; the type comes from the static
+`import type` above.
+
+## [3] before: `const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode:`
+No soul for turns 1–6 (browse), then a Level-3 lite soul activates at turn
+7. The activation turn (7) is count 0 and does NOT fire; the first lite
+beat lands 6 turns later at turn 13. (Session-absolute code fired at 12.)
+
+## [4] before: `const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode:`
+Activate at turn 10 — long after turn 6. In the session-absolute model a
+turn 6 reached while inactive froze the schedule for the whole session;
+here nothing counts until activation, so it fires 6 turns after → turn 16.
+
+## [5] before: `const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode:`
+full is a ramp-then-plateau (ADR-0001): the mala factors [6, 3, 2, 3] are
+cumulative POSITIONS (prefix products) 6, 18, 36, 108 — NOT repeating gaps
+— then a steady +108 pulse. Active from turn 1 (count 0 at turn 1, no
+fire) → counts 6, 18, 36, 108, 216 → turns 7, 19, 37, 109, 217. The former
+cyclic turns 10, 12, 15, 20… are gone.
+
+## [6] before: `const x: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "l`
+Soul X (updatedAt 100) active from turn 1 → first beat at turn 7. At turn 8
+the identity changes (bumped updatedAt = 200, as a level/heartbeat change
+would do) → count resets to 0 at turn 8 (no fire) → next beat 6 turns later
+at turn 14.
+
+## [7] before: `const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode:`
+Custom N=4, active from turn 1: turn 1 is the activation anchor (count 0,
+no fire), then a beat every 4 → counts 4, 8, 12 → turns 5, 9, 13. A custom
+integer degenerates to a single-gap list [N] that clamps immediately and
+repeats forever, exactly like `lite`'s [6] with N substituted.
+
+## [8] before: `const { firedAt, totalSends } = await driveSiblings(8);`
+Two closures (jiti moduleCache:false) see the same active soul and reach
+the same activation-anchored beat at turn 7. The coordinator lets exactly
+one send through; keyed on identity+count, not a session-absolute turn.
+
+===== FILE: docs/rationale/events.md =====
+# Rationale — src/events.ts
+
+## [1] before: `let currentIdentity: string | null = null;`
+Activation-anchored scheduler state. `currentIdentity` is the Active Soul
+identity we are anchored to (null = none active); `count` is turns since the
+anchor (0 = the activation turn); `intervalIndex`/`nextTurnAt` walk the beats.
+
+## [2] before: `if (mode === "off" || soul.level < 3) {`
+The Level-3 + content gate. Disabled, below Level 3, or with no
+heartbeat content, the Soul is present (it still anchors the schedule)
+but has nothing to send.
+
+## [3] before: `intervalIndex = Math.min(intervalIndex + 1, intervals.length - 1);`
+Advance to the next beat, CLAMPING the index at the last gap so the final
+entry repeats forever: `full` ramps (6, 12, 18, 72) then holds at +108;
+`lite` (one entry) repeats its single gap. Runs whether or not we actually
+send, keeping the cadence ticking.
+
+## [4] before: `const beatKey = `${result.identity}#${count}`;`
+Module-level dedup: if a sibling closure already serviced this exact
+activation-anchored beat, skip the send. Keyed on identity + count (not a
+session-absolute turn), and recorded only AFTER an actual send.
+
+## [5] before: `pi.sendMessage({`
+No deliverAs option: when the agent is idle (not streaming), this appends
+immediately to agent.state.messages and persists to the session, rather
+than queueing in _pendingNextTurnMessages to be flushed on the next user
+message. Wrap in XML tags so the LLM can distinguish this as an automatic
+system reminder rather than a direct user message.
+
+===== FILE: docs/rationale/commands.md =====
+# Rationale — src/commands.ts
+
+## [1] before: `const hbMatch = /^--heartbeat\s+(\S+)$/i.exec(trimmed);`
+Heartbeat mode (--heartbeat off|lite|full|<positive integer N>).
+Resolve mode WORDS first (they win over integer parsing), then attempt a
+positive-integer parse. Reject 0, negative, fractional, and non-numeric with
+a clear message (NOT clamped, unlike --level); warn but ACCEPT values > 1000.
+
+## [2] before: `const active = yield* persistence.load();`
+Re-read the active soul to determine its effective level: heartbeat
+content only loads at Level 3, so a cadence set below Level 3 persists
+but cannot fire until the soul is loaded at Level 3.
+
+## [3] before: `const settingMsg =`
+Path-aware, honest timing: off disables; a sub-Level-3 cadence already
+got its needs-L3 notice just above (so no next-turn claim here); an
+active Level-3 cadence re-anchors and takes effect on the next turn.
+
+===== FILE: docs/rationale/types.md =====
+# Rationale — src/types.ts
+
+## [1] before: `export const HeartbeatModeSchema = S.Union(`
+Heartbeat mode widens to off | lite | full | positive-integer N (ADR-0001):
+a custom N fires every N turns from activation. Mode words decode first; a
+positive whole number decodes via the Int+positive branch (rejects 0,
+negative, fractional). Persisted with the Active Soul so a custom N round-trips.
