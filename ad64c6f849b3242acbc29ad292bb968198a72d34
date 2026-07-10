@@ -17,3 +17,4 @@
 | History · loader | refs/notes/docs-history-loader | TP-005/006/007/009/010 + root scratch — loader.ts API & error handling |
 | History · testing | refs/notes/docs-history-testing | TP-008 — test frailty & isolation |
 | Reviews | refs/notes/docs-reviews | Standalone code-quality / runtime-safety / spec-compliance reviews |
+| ADR | refs/notes/docs-adr | Architecture Decision Records (0001: heartbeat anchors to activation) |
