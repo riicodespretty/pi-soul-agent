@@ -2,6 +2,7 @@
 #
 # File index:
 #   docs/architecture/overview.md — module map, event-handler bridge, wiring, findings
+#   docs/architecture/heartbeat-wedge-triage.md — CONFIRMED heartbeat scheduler wedge (repro + root cause + fix direction)
 #
 # Anchored to root commit in ref refs/notes/docs-architecture.
 
@@ -55,7 +56,17 @@ Internal: SoulNotFoundError, NoSoulsFoundError, ManifestParseError, FileSystemEr
 Public: SoulLoadError — the only error that escapes the loader API; consumers handle one
 tagged type via Effect.catchTag("SoulLoadError", ...).
 
-## Open findings (UNVERIFIED — captured 2026-07-10, no failing test written yet)
+## Open findings
+- **[CONFIRMED 2026-07-10] Heartbeat scheduler wedge** (events.ts turn_end). Full triage: the
+  `docs/architecture/heartbeat-wedge-triage.md` section below. Root cause `src/events.ts:105`
+  (`if (!result.active) return;`) short-circuits before the schedule advance at `:117-118`, and the
+  strict gate `:56` (`totalTurns !== nextTurnAt`) never re-matches once `nextTurnAt` freezes. First
+  scheduled turn is 6; a single inactive turn-6 wedges heartbeats for the whole session; only
+  `session_start` recovers. Deterministic repro (RED, exit 1): the registration-level harness in the
+  triage section. Secondary defect: `:61` sets the coordinator "serviced" before the active-check.
+  NOT fixed (triage-only).
+
+### Previously-unverified notes (still open)
 - Heartbeat scheduler wedge (events.ts turn_end). `nextTurnAt` advances ONLY on the branch
   where a heartbeat actually fires (result.active === true). If the scheduled turn arrives
   while inactive (common case: no Soul active yet at turn 6), `nextTurnAt` freezes and the
@@ -73,3 +84,213 @@ tagged type via Effect.catchTag("SoulLoadError", ...).
 ## Verified state (2026-07-10)
 - Test suite passes: 3 files, 59 tests via `node node_modules/vitest/vitest.mjs run`.
 - Clean working tree on `main`. No git notes existed before this doc set was created.
+
+===== FILE: docs/architecture/heartbeat-wedge-triage.md =====
+# Heartbeat-Wedge Triage — `registerHeartbeatReminderHandler`
+
+**Verdict: CONFIRMED bug.** Root cause = `src/events.ts:105` (`if (!result.active) return;`)
+short-circuiting **before** the schedule advance at `src/events.ts:117-118`, combined with the
+strict-equality gate at `src/events.ts:56`. TRIAGE ONLY — no fix applied, no tracked file modified.
+
+Primary source: `src/events.ts` (read verbatim), `src/commands.ts:299-352`, `.pi/extensions/soul.ts:43-54`.
+
+---
+
+## 1. Symptom
+
+The heartbeat reminder handler can **permanently stop firing for the rest of a session**. Once wedged,
+even activating a level-3 soul (`/soul <name> --level 3`) never produces a `soul-heartbeat-reminder`
+message. The only recovery is a real `session_start` (`startup`/`new`), i.e. an app restart / new session.
+
+## 2. One-command repro (RED)
+
+Exercises the **REAL** closure (`registerHeartbeatReminderHandler`) with a fake `pi`
+(records `pi.on` / captures `pi.sendMessage`) and a fake `runtime` whose `runPromise` returns a controlled
+`{_tag, active, ...}` per turn. Each scenario runs in its own process so the module-level
+`_heartbeatCoordinator` starts fresh (proving the coordinator is not the cause).
+
+```
+$ bun /tmp/hb-triage/harness.ts ; echo "EXIT=$?"
+
+scenario            turns  activeFrom  heartbeatsSent  firstAt
+------------------  -----  ----------  --------------  -------
+wedge                  15           7               0     null
+active-from-start      15           1               2        6
+min-wedge               7           7               0     null
+min-boundary            6           6               1        6
+
+── verdicts ──
+control (active-from-start) detects heartbeat @6 : GREEN ok
+boundary (turn-6 active) fires @6                : GREEN ok
+wedge: 0 heartbeats after activation (turns 7-15): RED (bug reproduced)
+min-wedge: 0 heartbeats (turn6 inactive,turn7 act): RED (bug reproduced)
+
+RED ✗ WEDGE BUG REPRODUCED: soul activated after turn 6-passed-inactive never emits a heartbeat.
+     (Harness is sound: control + boundary fire at turn 6. A correct scheduler would make wedge GREEN.)
+EXIT=1
+```
+
+**Deterministic:** exit code `1` on every run (3/3 confirmed).
+
+**Red-capable & sound:**
+- `wedge` / `min-wedge` → **0** heartbeats after activation → RED (the user's exact symptom).
+- `active-from-start` control → **2** heartbeats (turns 6 & 12; lite interval = 6) → the harness *can*
+  observe a heartbeat, so 0 is a real defect, not a dead harness.
+- `min-boundary` (soul active exactly at turn 6) → fires at 6 → shows the turn-6-inactive step is
+  load-bearing.
+- A correct scheduler flips `wedge`/`min-wedge` to GREEN (see §6 differential).
+
+## 3. Minimised repro
+
+Smallest turn sequence that still wedges = **7 turns** (`min-wedge`):
+- turns 1–6: pipeline returns `active:false` (no active soul yet).
+- turn 7: pipeline returns `active:true` (soul now active).
+- Result: **0** heartbeats.
+
+Every element is load-bearing:
+- Remove turn 7 → nothing to observe post-activation (no assertion possible).
+- Make turn 6 active instead (`min-boundary`, 6 turns) → fires at 6 → **green**. So "turn 6 arrives while
+  inactive" is the single load-bearing precondition.
+
+## 4. Ranked hypotheses + verdicts
+
+1. **[CONFIRMED] Schedule-advance is gated behind the active-check (the wedge).**
+   `nextTurnAt += intervals[...]` (`events.ts:118`) sits *after* `if (!result.active) return;`
+   (`events.ts:105`). Prediction: if the scheduled turn arrives while `active:false`, `nextTurnAt` freezes
+   while `totalTurns` keeps incrementing (`events.ts:55`), so the strict gate `totalTurns !== nextTurnAt`
+   (`events.ts:56`) is permanently true → never fires again.
+   *Experiment:* wedge/min-wedge → 0 fires (harness); differential "fixed" variant that advances
+   unconditionally → recovers. **Confirmed.**
+
+2. **[REFUTED as primary; REAL as secondary] Module-level `_heartbeatCoordinator` dedup blocks re-fire.**
+   `events.ts:60-61` sets `servicedAtTurn = totalTurns` and skips if `servicedAtTurn >= totalTurns`.
+   Prediction: if this were the cause, a *fresh* coordinator per run would still fire. *Experiment:* each
+   harness scenario runs in its own process (fresh `servicedAtTurn = -1`) and **still** wedges → the gate
+   freeze, not the coordinator, is the cause. **Refuted as primary.**
+   *However* — secondary latent defect: `servicedAtTurn` is set at line 61 **before** the `active` check at
+   line 105, so it records "serviced at turn 6" when **no** heartbeat was actually sent. In the documented
+   multi-closure (jiti `moduleCache:false`) scenario this premature claim can suppress a *sibling* closure
+   that reaches turn 6 while active. Bounded to the turn it happened; not the session-wide wedge. Worth
+   fixing alongside.
+
+3. **[REFUTED] Mode-switch mid-session desync (`--heartbeat lite/full`).**
+   Prediction: changing `HEARTBEAT_INTERVALS[result.mode]` mid-session corrupts `intervalIndex`.
+   *Experiment:* `/soul --heartbeat` (`commands.ts:210-236`) only calls `persistence.updateHeartbeatMode`
+   and explicitly says *"Will take effect after restart or /reload"*; it never touches the live closure. The
+   wedge reproduces with a single fixed mode (`lite`). **Refuted.**
+
+4. **[REFUTED] Off-by-one in the interval advance (`(intervalIndex+1) % len`).**
+   Prediction: pre-increment before indexing skips/repeats an interval. *Experiment:* traced arithmetic —
+   seed `intervalIndex=0, nextTurnAt=6`; `full` yields gaps 6,3,2,3,6… exactly matching the documented mala
+   (6→3→2→3). Advance is internally consistent; it simply never *runs* in the wedge. **Refuted.**
+
+## 5. Confirmed root cause
+
+- **File:line:** `src/events.ts:105` — `if (!result.active) return;`
+- **Offending interaction:** that early-return precedes the schedule advance `nextTurnAt += intervals[...]`
+  at **`src/events.ts:118`** (and index bump at `:117`), while the entry gate at **`src/events.ts:56`**
+  (`if (totalTurns !== nextTurnAt) return;`) uses strict inequality against an ever-incrementing
+  `totalTurns` (`:55`).
+- **Mechanism:** scheduled turn (initially `nextTurnAt = 6`, `:45`) arrives while pipeline is inactive →
+  gate passes (`totalTurns === nextTurnAt`) → runs to `:105` → returns → `nextTurnAt` **never advances** →
+  `totalTurns` keeps growing → `:56` gate is `true` forever → handler body never reached again.
+
+### Complete trigger-condition set
+
+The pipeline returns `active:false` (freezing the schedule) on **any** of these at a scheduled turn
+(source-exact):
+- No active soul persisted — `Option.isNone(activeSoul)` → `events.ts:66`.
+- `soul.heartbeatMode === "off"` → `events.ts:71`.
+- `soul.level < 3` → `events.ts:74`.
+- Manifest has no `heartbeatContent` → `events.ts:80`.
+- (Also the error path `events.ts:100-103` returns early before advance — same freeze class.)
+
+Wedge fires when **the scheduled turn (turn 6, then each subsequent `nextTurnAt`) is reached while any of
+the above holds.** Because turn 6 is the *first* scheduled turn and the counter only advances on a
+successful fire, a single inactive turn 6 freezes the whole session.
+
+### Only recovery
+
+`session_start` handler inside the closure (`events.ts:48-52`) resets `intervalIndex=0, nextTurnAt=6,
+totalTurns=0`. Nothing else resets them.
+
+## 6. Blast radius — the common real-world path
+
+**Path:** user starts a session with **no active soul**, works a few turns, then runs
+`/soul <name> --level 3`.
+
+- `/soul` activate (`commands.ts:299-352`) calls `persistence.save(...)` + `pi.sendMessage(..., {deliverAs:
+  "steer"})`. It **does not** emit `session_start` and **does not** touch the heartbeat closure counters
+  (they are lexically private to `registerHeartbeatReminderHandler`'s closure; `commands.ts` has no
+  reference to them).
+- The heartbeat handler and the session-start handler are **separate** registrations
+  (`.pi/extensions/soul.ts:50` vs `:53`); `registerSessionStartHandler` (`events.ts:142-193`) also does not
+  reach the closure counters.
+
+**Therefore:**
+- Activate a level-3 soul **within the first 5 turns** (before turn 6's `turn_end`) → turn 6 is active →
+  fires → advances → **no wedge**.
+- Turn 6's `turn_end` occurs while still inactive (activation at/after turn 6, i.e. "a few turns in" where
+  few ≥ 6) → **wedged for the entire session**; the mid-session `/soul` activation can never un-wedge it
+  because it doesn't reset counters and doesn't fire `session_start`.
+
+This is a realistic, high-frequency path: the default UX is "browse, then activate a soul mid-session."
+Any activation past the turn-6 boundary silently disables heartbeats until restart. **Blast radius: high /
+silent** (no error surfaced — the handler just quietly returns at the gate).
+
+Fix-direction differential (`/tmp/hb-triage/differential.ts`, models the arithmetic buggy-vs-fixed on the
+same inactive→active stream):
+
+```
+$ bun /tmp/hb-triage/differential.ts ; echo EXIT=$?
+stream: inactive turns 1-6, active turns 7-20 (lite, first@6)
+buggy fired at turns: []
+fixed fired at turns: [12,18]
+
+buggy wedges (0 fires after activation): RED confirmed
+fixed recovers (fires >=1 after activation): GREEN confirmed
+EXIT=0
+```
+
+## 7. Proposed fix DIRECTION (NOT applied)
+
+Decouple "advance the schedule" from "did we actually fire". Options, in order of preference:
+
+1. **Always advance the schedule when a scheduled turn is reached; fire only if active.** Move the
+   `intervalIndex`/`nextTurnAt` advance so it runs whenever `totalTurns === nextTurnAt` (regardless of
+   `result.active`), and keep the `pi.sendMessage` gated on `result.active`. This keeps the mala cadence
+   ticking; after mid-session activation the next scheduled turn fires. (This is exactly the "fixed" variant
+   validated above.) Trade-off: the *first* post-activation heartbeat lands on the next cadence slot (e.g.
+   turn 12 for lite), not immediately.
+2. **Change the gate to catch-up semantics:** `if (totalTurns < nextTurnAt) return;` (>= instead of strict
+   !==) so a frozen `nextTurnAt` still lets a later turn pass the gate and re-evaluate/advance. Must be
+   paired with advancing on the pass to avoid firing every turn.
+3. Also address the **secondary** coordinator defect: set `_heartbeatCoordinator.servicedAtTurn` only
+   **after** a heartbeat is actually sent (move `events.ts:61` past the `active`/send point), so it records
+   real service, not a gate-pass.
+
+Pick 1 or 2 based on desired cadence semantics; 3 is complementary. **Not applied per triage scope.**
+
+## 8. Correct test seam for a regression test
+
+**As-is: no clean seam.** The scheduler state (`intervalIndex`, `nextTurnAt`, `totalTurns`) is captured in a
+closure created inside `registerHeartbeatReminderHandler(pi, runtime)` and is only reachable through
+`pi.on("turn_end", ...)` / `pi.on("session_start", ...)` callbacks. There is no exported pure function and
+no injection point for the counters. The `Effect.gen` pipeline is also inlined, not a named unit.
+
+Two viable seams:
+- **(Recommended, low-risk) Registration-level harness** — the approach used here: call the real
+  `registerHeartbeatReminderHandler` with a fake `pi` (capture `on`/`sendMessage`) and a fake `runtime`
+  (`runPromise` returns scripted `{_tag, active, ...}`), then drive `turn_end` N times and assert on
+  captured `sendMessage` calls. Exercises the true closure/bug site; portable into the repo's vitest suite
+  (`node node_modules/vitest/vitest.mjs run`). This is the correct seam for the regression test.
+- **(Better long-term) Refactor for testability** — extract a pure scheduler:
+  `nextHeartbeat(state, turn, active, intervals) -> {state, fire}` and unit-test it directly, leaving the
+  handler as a thin adapter. Flag for the architecture pass; the current closure-in-a-registration-fn shape
+  is what makes this bug hard to lock down.
+
+---
+
+### Artifacts (throwaway, /tmp only — no tracked files touched)
+- `/tmp/hb-triage/harness.ts` — real-closure repro (RED, exit 1, deterministic).
+- `/tmp/hb-triage/differential.ts` — fix-direction validation (buggy wedges / fixed recovers).
