@@ -1,0 +1,997 @@
+# docs-reviews — Standalone extension reviews
+#
+# File index (3 docs):
+#   review-code-quality.md — Code Quality & Maintainability Review
+#   review-runtime-safety.md — Runtime Safety & Robustness Review — SoulSpec Pi Extension (Effect TS)
+#   review-spec-compliance.md — SoulSpec v0.5 Compliance & Data Correctness Review
+#
+# Migrated from the working tree into git notes (ref refs/notes/docs-reviews),
+# anchored to root commit ad64c6f849b3242acbc29ad292bb968198a72d34. Skill: docs-in-git-notes.
+
+===== FILE: review-code-quality.md =====
+# Code Quality & Maintainability Review
+
+**Generated:** 2026-05-15
+**Scope:** All 10 `src/` files + `.pi/extensions/soul.ts` + 3 TP-003 audit docs
+**Build status:** `tsc --noEmit --strict` → 0 errors, 0 warnings
+
+---
+
+## 1. Dead Code
+
+| Severity | File:Line             | Finding                                              | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------- | --------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🟢 Low   | `src/logger.ts:17-22` | **`logDebug` exported but never imported**           | Grep for `import.*logDebug` across `src/` and `.pi/extensions/` returns zero results. The extension entry point (soul.ts:36,52) uses `Effect.logDebug()` directly instead. The `logDebug` helper exists only in its own JSDoc example.                                                                                                                                                                                                                                                   |
+| 🟢 Low   | `src/types.ts:178`    | **`SoulLoadError` type exported but never imported** | Grep for `import.*SoulLoadError` across all source files returns zero results (only found in an old TP-001-002 doc). This union type exists for callers but no caller uses it.                                                                                                                                                                                                                                                                                                           |
+| 🟢 Low   | `src/loader.ts:87-95` | **9 lines of no-op initialization**                  | `manifest.soul_content = manifest.soul_content ?? undefined` etc. Since `readJsonFile<SoulManifest>` returns a parsed JSON object, all optional content fields are already `undefined` (or `null` from explicit JSON `null`). The `?? undefined` normalizes `null→undefined` but the subsequent level-based loading (lines 100-173) directly assigns these same fields. Lines 87-95 set values that are immediately overwritten or already correct. Dead code — can be removed entirely. |
+
+---
+
+## 2. Naming Consistency
+
+**TS-internal consistency: ✅ All field names match between types.ts, loader.ts, system-prompt.ts, and persistence.ts.** No mismatches would cause `undefined` at the TypeScript level.
+
+However, a critical runtime issue exists:
+
+| Severity    | File:Line                                            | Finding                                          | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------- | ---------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔴 Critical | `src/loader.ts:84` → `src/services/soul-fs.ts:23-43` | **No camelCase→snake_case mapping on JSON read** | The SoulSpec v0.5 spec defines fields in camelCase (`specVersion`, `displayName`, `interactionMode`, `allowedTools`, `supersededBy`, `files.userTemplate`, `minTokenContext`). The `SoulManifest` interface uses snake_case (`spec_version`, `display_name`, etc.). `readJsonFile<SoulManifest>` does a direct `JSON.parse(content) as T` with no field mapping. **At runtime, a spec-compliant soul.json will silently produce `undefined` for all mapped fields.** 8 field names mismatch (see `docs/TP-003/spec-compliance.md:101-113` for full list). |
+
+---
+
+## 3. Type Import Hygiene (`verbatimModuleSyntax`)
+
+**✅ No violations found across all 10 files.** Every type-only import uses `import type`:
+
+| File                       | Type-only imports                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/loader.ts:3`          | `import type { SoulManifest } from "./types"`                                                  |
+| `src/system-prompt.ts:1`   | `import type { SoulManifest } from "./types"`                                                  |
+| `src/persistence.ts:3`     | `import type { ActiveSoul } from "./types"`                                                    |
+| `src/tools.ts:3`           | `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"`                          |
+| `src/commands.ts:2`        | `import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent"` |
+| `src/events.ts:2`          | `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"`                          |
+| `.pi/extensions/soul.ts:1` | `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"`                          |
+
+All value imports (e.g., `import { Effect } from "effect"`, `import { SoulSpecLoader } from "./loader"`) are correctly used as values. No violations.
+
+---
+
+## 4. Code Duplication
+
+| Severity  | Pattern                                                  | Occurrences                    | Details                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------- | -------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 🟡 Medium | **"Did you mean?" suggestion logic**                     | ~2.5 copies                    | Same pattern appears in `tools.ts:60-105` (registerLoadSoulTool), `tools.ts:247-273` (registerSoulInfoTool, partial), and `commands.ts:214-245` (registerSoulCommand). Each wraps `runtime.runPromise(Effect.gen(...))` calling `findMatchingSouls` + `getAllSouls`, checks match count, formats up-to-5 suggestions, and returns error response. Could extract as: `async function suggestSouls(runtime, soulName): Promise<{ content, details, isError } | null>`. |
+| 🟢 Low    | **`runtime.runPromise(Effect.gen(function* () { … }))`** | ~18 times                      | This pattern is the necessary bridge between Pi's async API and Effect's runtime. Each Effect.gen body is unique, so complete extraction isn't possible without adding abstractions that obscure the flow.                                                                                                                                                                                                                                                 |
+| 🟢 Low    | **`readTextFile` + `Effect.catchAll`**                   | 8 times in `loader.ts:103-163` | Each file-load section follows: `if (files.X) { manifest.X_content = yield* readTextFile(...).pipe(Effect.catchAll(() => Effect.succeed(undefined))) }`. Could extract a helper like `loadOptionalContent<T>(path: string): Effect<T \| undefined>`, but 8 inline repetitions with slightly different field paths is acceptable for clarity.                                                                                                               |
+
+---
+
+## 5. Comments & Self-Documenting Code
+
+| Severity | File:Line                       | Finding                                           | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------- | ------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🟢 Low   | `src/services/soul-fs.ts:17-22` | **Broken JSDoc — two overlapping comment blocks** | Line 17 opens `/**` but never closes with `*/` (line 19 is empty). Line 20 opens a second `/**` which is consumed as text inside the first comment block. The `*/` at line 22 closes the first block. The net effect: `readJsonFile` (line 23) has **no effective JSDoc** — IDEs won't show documentation for it. The text "Read and parse a JSON file, returning the typed result." is orphaned inside the first comment. |
+
+**Otherwise good JSDoc coverage:**
+
+- All 3 tool registration functions in `tools.ts` — ✅
+- Both command functions + parser in `commands.ts` — ✅
+- All 3 event handlers in `events.ts` — ✅
+- All 3 persistence methods in `persistence.ts` — ✅
+- `buildSystemPrompt` with `@param` and `@returns` in `system-prompt.ts:10-13` — ✅
+- `expandHome` with important sync-boundary note in `soul-fs.ts:6-9` — ✅
+- Error types in `types.ts` — ✅
+- `logDebug` with usage example in `logger.ts:14-16` — ✅
+
+No misleading or stale comments found.
+
+---
+
+## 6. File Granularity
+
+**✅ Appropriate split.** 10 files + 1 extension file:
+
+| File                      | Lines | Role                          | Assessment                                                        |
+| ------------------------- | ----- | ----------------------------- | ----------------------------------------------------------------- |
+| `src/types.ts`            | 178   | All types, errors, enums      | Clean, self-contained                                             |
+| `src/loader.ts`           | 236   | SoulSpecLoader service        | Appropriate                                                       |
+| `src/system-prompt.ts`    | 98    | Pure prompt builder           | Ideal separation from IO                                          |
+| `src/persistence.ts`      | 89    | ActiveSoulPersistence service | Appropriate                                                       |
+| `src/tools.ts`            | 283   | 3 tool registrations          | Largest, but 3 related exports                                    |
+| `src/commands.ts`         | 251   | 2 command registrations       | Could split parseSoulCommandArgs into own file, but not necessary |
+| `src/events.ts`           | 136   | 3 event handlers              | Appropriate                                                       |
+| `src/logger.ts`           | 22    | Logger layer + helper         | Fine as is                                                        |
+| `src/services/soul-fs.ts` | 55    | FS utilities                  | Appropriate                                                       |
+| `.pi/extensions/soul.ts`  | 53    | Wiring / entry point          | Correct                                                           |
+
+No files should be merged or split.
+
+---
+
+## 7. `import "./system-prompt"` Pattern
+
+**✅ Already fixed.** The TP-001-002 audit flagged `events.ts` using a dynamic import `Effect.sync(() => import("./system-prompt"))` which would have returned a Promise object, not the function. The current `events.ts:6` uses a correct static import:
+
+```ts
+import { buildSystemPrompt } from "./system-prompt";
+```
+
+This matches `tools.ts:5` and `commands.ts:5`. All three files use the same static import pattern. Consistent.
+
+---
+
+## 8. `AppRuntime` Type — Duplication & Precision
+
+| Severity | File:Line           | Finding                                                     |
+| -------- | ------------------- | ----------------------------------------------------------- |
+| 🟢 Low   | `src/tools.ts:8`    | `type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>` |
+| 🟢 Low   | `src/commands.ts:8` | `type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>` |
+| 🟢 Low   | `src/events.ts:9`   | `type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>` |
+
+**Three copies of the same type alias, all using imprecise `any, any`.** The actual type of `runtime` in `.pi/extensions/soul.ts:28` (`ManagedRuntime.make(AppLayer)`) is more specific and could be inferred with `typeof runtime`. However, sharing the type from soul.ts is impractical because it would create a circular dependency (soul.ts imports from tools/commands/events; tools/commands/events importing from soul.ts would form a cycle).
+
+**Recommendation (low priority):** Define the shared type in a neutral location, e.g., export from `types.ts`:
+
+```ts
+// types.ts
+import type { ManagedRuntime } from "effect";
+export type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>;
+```
+
+Then import `type { AppRuntime } from "./types"` in all three files. This removes duplication without creating cycles.
+
+---
+
+## 9. Dependency Direction
+
+**✅ Clean linear graph, no cycles:**
+
+```
+types.ts  (no project deps)
+  ↓
+services/soul-fs.ts → types.ts
+  ↓
+loader.ts → types.ts, soul-fs.ts
+persistence.ts → types.ts, soul-fs.ts
+system-prompt.ts → types.ts
+  ↓
+tools.ts → loader.ts, system-prompt.ts
+commands.ts → loader.ts, persistence.ts, system-prompt.ts
+events.ts → loader.ts, persistence.ts, soul-fs.ts, system-prompt.ts
+  ↓
+(.pi/extensions/)soul.ts → logger, loader, persistence, tools, commands, events
+```
+
+- No file imports from a file that imports back.
+- `system-prompt.ts` depends only on `types.ts` — zero IO, pure function.
+- `services/soul-fs.ts` depends only on `types.ts` — lowest utility layer.
+- All dependencies point in one direction: types → utilities → services → registrations → wiring.
+
+---
+
+## 10. Testability
+
+**✅ Good testability for all components.** No tests exist yet (0 `.test.ts` or `.spec.ts` files found), but the architecture supports testing well:
+
+| Component                                    | Test strategy                                                                                                          | Dependencies         |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `buildSystemPrompt` (system-prompt.ts)       | Pure function, trivial unit test with a `SoulManifest` fixture. No IO, no Effect. Zero setup.                          | None                 |
+| `expandHome` (soul-fs.ts:10-15)              | Pure function, trivial string transformation tests.                                                                    | `process.env` (sync) |
+| `readJsonFile` / `readTextFile` (soul-fs.ts) | Unit test with mock `FileSystem` via `FileSystem.makeNoop`                                                             | `FileSystem`         |
+| `SoulSpecLoader` (loader.ts)                 | Provide mock `FileSystem` via Effect layer: `Layer.provide(SoulSpecLoader.Default, Layer.succeed(FileSystem, mockFs))` | `FileSystem`         |
+| `ActiveSoulPersistence` (persistence.ts)     | Same mock FileSystem pattern. Test save/load/clear roundtrip.                                                          | `FileSystem`         |
+| Error types (types.ts:163-178)               | Verify `_tag` values via `Data.TaggedError` introspection                                                              | None                 |
+
+**Mock pattern** (documented in `validation-strategy.md:§4`):
+
+```ts
+import { FileSystem } from "@effect/platform/FileSystem";
+const testFs = FileSystem.makeNoop({
+  exists: (path) => Effect.succeed(true),
+  readFileString: (path) => { ... },
+  readDirectory: (path) => Effect.succeed(["test-soul"]),
+  writeFileString: () => Effect.void,
+  makeDirectory: () => Effect.void,
+  remove: () => Effect.void,
+});
+```
+
+**Gap:** No integration test pattern for the `AppLayer` composition itself (soul.ts:19-23). This requires loading the actual Effect runtime, which is better suited to an e2e test.
+
+---
+
+## Summary
+
+| Category    | Severity                                            | Count                                                                                                                                |
+| ----------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 🔴 Critical | Runtime field mapping gap (camelCase→snake_case)    | 1                                                                                                                                    |
+| 🟡 Medium   | Duplicated suggestion logic                         | 1                                                                                                                                    |
+| 🟢 Low      | Dead code (`logDebug`, `SoulLoadError`, no-op init) | 3                                                                                                                                    |
+| 🟢 Low      | Broken JSDoc (soul-fs.ts)                           | 1                                                                                                                                    |
+| 🟢 Low      | AppRuntime type duplicated 3× with imprecise type   | 1                                                                                                                                    |
+| ✅ Clean    | No issues                                           | Type import hygiene, naming consistency, file granularity, sys-prompt import, dependency direction, testability, `tsc --strict` pass |
+
+**No blockers for continued development.** The critical runtime mapping gap is a spec-compliance issue already documented in `docs/TP-003/spec-compliance.md` — it won't cause TypeScript errors but will silently produce `undefined` fields when reading spec-compliant `soul.json` files that use camelCase.
+
+===== FILE: review-runtime-safety.md =====
+# Runtime Safety & Robustness Review — SoulSpec Pi Extension (Effect TS)
+
+**Generated:** 2026-05-15
+**Scope:** `src/`, `.pi/extensions/soul.ts`, `docs/TP-003/`
+**Compiler:** `tsc --noEmit` — **ZERO errors** ✅
+**Tests:** None exist yet
+
+---
+
+## 1. Signal Bridging
+
+### ❌ `_signal` NOT bridged to `runtime.runPromise({ signal })`
+
+| File           | Line | Pattern                                                         |
+| -------------- | ---- | --------------------------------------------------------------- |
+| `src/tools.ts` | 31   | `async execute(_toolCallId, params, _signal, _onUpdate, _ctx)`  |
+| `src/tools.ts` | 127  | `async execute(_toolCallId, _params, _signal, _onUpdate, _ctx)` |
+| `src/tools.ts` | 199  | `async execute(_toolCallId, params, _signal, _onUpdate, _ctx)`  |
+
+In all three tool handlers, the `_signal` parameter is underscore-prefixed (convention for unused). The `runtime.runPromise(effect)` calls at lines 33, 129, 201 pass **no options object**.
+
+The Pi API provides `AbortSignal` for cancellation (user interrupt, timeout, session switch). `ManagedRuntime.runPromise` accepts `{ signal?: AbortSignal }`:
+
+```typescript
+// node_modules/effect/dist/dts/ManagedRuntime.d.ts:86
+readonly runPromise: <A, E>(effect: Effect.Effect<A, E, R>, options?: {
+    readonly signal?: AbortSignal | undefined;
+}) => Promise<A>;
+```
+
+**Impact:** If Pi cancels a tool execution, the Effect computation continues running to completion in the background. The result is discarded, but:
+
+- System resources are wasted on cancelled operations
+- Latency-sensitive users see no cancellation benefit
+- Long-running soul loads (level 3 with multiple file reads) cannot be interrupted
+
+**Fix:** `runtime.runPromise(effect, { signal })` on each tool handler. Not a breaking change.
+
+**Severity:** 🟡 Medium
+
+---
+
+## 2. Error Boundary Discipline
+
+### ✅ No try-catch inside Effect.gen
+
+All `try {` blocks (grep found 15 across `tools.ts`, `commands.ts`, `events.ts`) are at the **Pi bridge boundary** — inside the `async execute()` or `async handler()` functions, wrapping the `runtime.runPromise()` call. This is the correct pattern per the Pi API: throw/return errors from execute() to signal failure.
+
+Every `Effect.gen(function* () { ... })` generator (28 instances across all source files) uses Effect operators for error handling:
+
+- `Effect.try` for synchronous operations (e.g., `JSON.parse` at `persistence.ts:54-56`)
+- `Effect.catchAll` for optional file reads (e.g., `loader.ts:104,113,123...`)
+- `Effect.mapError` for error type conversion (e.g., `soul-fs.ts:36-42`)
+- `Effect.fail` for domain errors (e.g., `loader.ts:55`: `SoulNotFoundError`)
+
+The one pre-existing violation (`try { JSON.parse ... }` inside `Effect.gen` in `persistence.ts:54-62` from TP-001-002) has been correctly refactored to `Effect.try`.
+
+**Severity:** ✅ Clean
+
+---
+
+## 3. Catch Specificity — catchAll vs catchTag
+
+### ⚠️ All catch handlers use generic `catchAll`, never `catchTag`
+
+| File                 | Line(s)                         | Pattern                                                 | Assessment                                                         |
+| -------------------- | ------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| `src/loader.ts`      | 104,113,123,129,138,146,155,161 | `Effect.catchAll(() => Effect.succeed(undefined))`      | ✅ Correct — optional file reads should silently skip on any error |
+| `src/loader.ts`      | 194,206                         | `Effect.catchAll(() => Effect.succeed(false))`          | ✅ Correct — `exists` check failure treated as "doesn't exist"     |
+| `src/loader.ts`      | 199                             | `Effect.catchAll(() => Effect.succeed([] as string[]))` | ✅ Correct — unreadable directory treated as empty                 |
+| `src/persistence.ts` | 26,76                           | `Effect.catchAll(() => Effect.void)`                    | ✅ Correct — non-fatal fs operations                               |
+| `src/persistence.ts` | 37-40, 66, 79                   | `Effect.catchAll(... -> FileSystemError ...)`           | ⚠️ Could mask unexpected errors (see below)                        |
+
+**Concern:** `persistence.ts:save()` at line 37 wraps **all** errors into `FileSystemError`. If a non-FS error occurred (e.g., a logic bug in the JSON serialization), it would be caught and wrapped as `FileSystemError`, making debugging harder. The same applies to `persistence.ts:load()` at line 66, which returns `Option.none()` on any error.
+
+Similarly, optional file reads in `loader.ts` use `catchAll` rather than `catchTag("FileSystemError")`. If a non-FileSystem error occurred inside the read chain, it would be silently swallowed. In practice, the read chain (`fs.readFileString → mapError → catchAll`) can only produce `FileSystemError`, so this is a theoretical concern.
+
+**Recommendation:** For `persistence.ts:save()`, consider using `catchTag("FileSystemError", ...) + orDie` to surface unexpected errors. Low priority.
+
+**Severity:** 🟢 Low (theoretical)
+
+---
+
+## 4. Ref Immutability
+
+### ✅ Cache updates create new Map (immutable pattern)
+
+`src/loader.ts:176`:
+
+```typescript
+yield * Ref.update(cache, (m) => new Map(m).set(cachedKey, manifest));
+```
+
+This creates a new `Map` from the old one and sets the new entry — it does NOT mutate the existing Map in-place. This is correct and avoids leaking mutable state outside the `Ref` boundary.
+
+**Severity:** ✅ Correct
+
+---
+
+## 5. Cache Eviction
+
+### ⚠️ No eviction strategy — unbounded growth
+
+`src/loader.ts:18`:
+
+```typescript
+const cache = yield * Ref.make<Map<string, SoulManifest>>(new Map());
+```
+
+Cache is only written to (`new Map(m).set(...)` at line 176), never pruned. The cache key is `${soulPath}:${level}`, so each unique soul+level combination adds an entry. No LRU, no TTL, no max size.
+
+**Risk assessment:** Souls directories typically contain < 100 entries. Even at level 1/2/3, that's at most ~300 cache entries, each holding a `SoulManifest` object (~2-5 KB). Total memory impact is < 1.5 MB. Risk is **very low** for expected usage.
+
+**Notable:** The cache check at `loader.ts:72-77` reads the Ref, then `loader.ts:176` writes. There is a TOCTOU race: two concurrent `load()` calls for the same soul could both miss the cache and compute the manifest in parallel. The result is idempotent (same input → same manifest) so this is **harmless**.
+
+**Severity:** 🟢 Low
+
+---
+
+## 6. Empty Directory Handling
+
+### ✅ getAllSouls returns [] gracefully
+
+`src/loader.ts:185-216`:
+
+- Line 192-195: `fs.exists(resolvedBase)` with catchAll → `false` → `continue` (skip non-existent/forbidden dirs) ✅
+- Line 197-199: `fs.readDirectory(resolvedBase)` with catchAll → `[]` on failure ✅
+- If directories are empty or don't exist: `seen` set stays empty, `souls` array stays `[]` ✅
+
+**Edge case — non-directory entries:** Line 201-206 iterates `readDirectory` results, checking `${resolvedBase}/${entry}/soul.json`. If `entry` is a file, `fs.exists(file/soul.json)` returns `false` and it's skipped. ✅
+
+**Severity:** ✅ Correct
+
+---
+
+## 7. Permission Errors
+
+### ✅ Graceful handling at all levels
+
+| Layer              | Location                | Behavior                                                             |
+| ------------------ | ----------------------- | -------------------------------------------------------------------- |
+| Directory read     | `loader.ts:197-199`     | `Effect.catchAll(() => Effect.succeed([]))` — bad dir = empty        |
+| Directory exists   | `loader.ts:192-195`     | `Effect.catchAll(() => Effect.succeed(false))` — treat as missing    |
+| File exists        | `loader.ts:204-206`     | `Effect.catchAll(() => Effect.succeed(false))` — treat as missing    |
+| soul.json read     | `soul-fs.ts:35-42`      | `Effect.mapError` → `FileSystemError`                                |
+| Text file read     | `soul-fs.ts:52-54`      | `Effect.mapError` → `FileSystemError`                                |
+| Optional file read | `loader.ts:104,113,...` | `Effect.catchAll(() => Effect.succeed(undefined))` — skip gracefully |
+
+**Note:** Permission errors on optional file reads are silently swallowed (same as "file doesn't exist"). This is the desired behavior — optional files are, by definition, optional. The user doesn't need to see EACCES for an AGENTS.md they don't need.
+
+**Severity:** ✅ Correct
+
+---
+
+## 8. Thread Safety — Concurrent cache access
+
+### ✅ Ref is atomic; TOCTOU race is harmless
+
+`Ref` in Effect TS provides atomic read-modify-write. However, the `load()` method at `loader.ts:69-179` uses a **read-then-write** pattern:
+
+```typescript
+// Line 72-76: READ
+const currentCache = yield * Ref.get(cache);
+const cached = currentCache.get(cachedKey);
+if (cached) return cached;
+
+// ... computation ...
+
+// Line 176: WRITE
+yield * Ref.update(cache, (m) => new Map(m).set(cachedKey, manifest));
+```
+
+Two concurrent fibers could both read the cache, both find a miss, and both compute the same soul. This is **idempotent** (same input → same `SoulManifest`), so no correctness issue. The only cost is duplicated computation (2 file reads for the same soul).
+
+For a more robust pattern, one could use `Ref.modify` to atomically check-and-compute:
+
+```typescript
+yield *
+  Ref.modify(cache, (m) => {
+    const existing = m.get(key);
+    if (existing) return [existing, m];
+    // ... but Effect.compute can't run inside Ref.modify's sync function
+  });
+```
+
+Since Effect's `Ref.modify` takes a sync function, this doesn't compose nicely with async effectful computation. The current pattern is the practical approach.
+
+**Severity:** 🟢 Low (harmless)
+
+---
+
+## 9. Cross-Platform Paths — expandHome
+
+### ⚠️ Uses `process.env.HOME` instead of `os.homedir()`
+
+`src/services/soul-fs.ts:10-15`:
+
+```typescript
+export function expandHome(p: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "/home/user";
+  if (p === "~") return home;
+  if (p.startsWith("~/")) return `${home}/${p.slice(2)}`;
+  return p;
+}
+```
+
+Issues:
+
+1. **Windows `~\` paths not handled** — `p.startsWith("~\\")` is not checked. On Windows, `~\.pi\agent\souls` would not be expanded.
+2. **`os.homedir()` is more robust** — The Node.js `os.homedir()` function handles cross-platform differences (Windows uses `USERPROFILE`, Unix uses `HOME`). Current code falls back to `USERPROFILE` but prefers `HOME`, which is correct for Unix but may behave unexpectedly on Windows if both are set differently.
+3. **Hardcoded fallback** — `/home/user` is Unix-specific. On Windows, this would be wrong.
+
+**Mitigation:** The project's `package.json` uses `@effect/platform-node` which implies a Node.js target. The extension runs in a Node.js environment (Pi agent is Node-based). Cross-platform Windows support is likely out of scope, but the pattern should be corrected for robustness.
+
+**Severity:** 🟢 Low
+
+---
+
+## 10. Event Handler Return Types
+
+### ✅ `session_start` — returns `void` (correct)
+
+`src/events.ts:20-67`: No return statement. The async function resolves to `void`. ✅ Matches Pi API expectations.
+
+### ⚠️ `resources_discover` — return type incomplete
+
+`src/events.ts:74-92`: The local `ResourcesDiscoverResult` type (defined at `events.ts:12-14`) only declares `promptPaths`:
+
+```typescript
+interface ResourcesDiscoverResult {
+  promptPaths?: string[];
+}
+```
+
+The Pi API docs (`extensions.md:339-354`) show the expected return shape as:
+
+```typescript
+return { skillPaths: [], promptPaths: [], themePaths: [] };
+```
+
+The function returns `{ promptPaths: [...] }` without `skillPaths` and `themePaths`. Functionally this is fine (Pi runner uses optional chaining), but the type is not fully accurate.
+
+**Impact:** None functionally. But if a future Pi API version requires these fields, it would break silently.
+
+**Severity:** 🟢 Low
+
+### ✅ `before_agent_start` — correct
+
+`src/events.ts:98-136`: Returns `{ systemPrompt: string }` on success, `undefined` on no-op. ✅ The prompt is appended (not replaced) via `\n\n---\n` separator. This matches the Pi API contract.
+
+**Severity:** ✅ Correct
+
+---
+
+## 11. Memory Leaks
+
+### ✅ No subscription/resource leak patterns
+
+- No `setInterval`, `setTimeout`, WebSocket connections, or open file handles.
+- No `Effect.acquireUseRelease` or `Effect.Scoped` patterns — all FileSystem calls are stateless reads/writes.
+- No event emitter subscriptions outside the Pi extension lifecycle (`pi.on()` handlers are managed by Pi infrastructure).
+
+### ⚠️ No runtime disposal on extension reload
+
+`src/.pi/extensions/soul.ts:28`:
+
+```typescript
+const runtime = ManagedRuntime.make(AppLayer);
+```
+
+The `ManagedRuntime` is created at module scope (singleton). If the Pi agent reloads the extension (hot reload, config change), the old runtime is abandoned without disposal. Effect's `ManagedRuntime` in v3 does not have an explicit `dispose()` method — it relies on the Effect scope system for cleanup. Since there are no scoped resources, this is functionally a no-op, but the allocation pattern doesn't clean up.
+
+**Impact:** Negligible for the current implementation (no scoped resources). Worth noting if future versions use connections or file watchers.
+
+**Severity:** 🟢 Low (informational)
+
+---
+
+## 12. Additional Findings
+
+### 📋 Duplicated JSDoc block in soul-fs.ts
+
+`src/services/soul-fs.ts:17-22`:
+
+```
+/**
+ * Read and parse a JSON file, returning the typed result.
+
+/**
+ * Read and parse a JSON file, returning the typed result.
+ */
+```
+
+Double `/**` block with empty content in between. This is a formatting artifact — the middle `/**` on line 20 is likely a stale opening that was never closed, and it's being merged with the real block. TypeScript ignores it, but automated doc generators (TSDoc, TypeDoc) may produce unexpected output.
+
+**Severity:** 🟢 Trivial (cosmetic)
+
+### 📋 No tests exist
+
+No `*.test.ts` or `*.spec.ts` files found in the project. All the validation strategy in `docs/TP-003/validation-strategy.md` is purely documentary. This means:
+
+- `buildSystemPrompt` (pure function, no deps) is untested
+- `expandHome` edge cases (`~`, `~\`, empty string) are untested
+- Error types (`SoulNotFoundError`, `ManifestParseError`, `FileSystemError`) are untested
+- `SoulSpecLoader` and `ActiveSoulPersistence` Effect services are untested
+- Level clamping at CLI boundary is untested
+
+**Severity:** 🟡 Medium (missing test coverage for a production extension)
+
+### 📋 `rethrowIfNot` pattern missing for catchAll blocks
+
+All `catchAll` handlers unconditionally catch everything. None use the pattern:
+
+```typescript
+Effect.catchAll((e) => Effect.succeed(undefined)).pipe(Effect.catchAllDefect((d) => Effect.die(d)));
+```
+
+This is acceptable for the use cases here (optional file reads, best-effort FS operations), but unexpected defects (bugs in the Effect runtime) would be silently swallowed.
+
+**Severity:** 🟢 Low (theoretical)
+
+---
+
+## Summary
+
+| #   | Issue                                                               | File:Line                 | Severity   | Status |
+| --- | ------------------------------------------------------------------- | ------------------------- | ---------- | ------ |
+| 1   | `_signal` not bridged — cancellation gap                            | `tools.ts:31,127,199`     | 🟡 Medium  | Open   |
+| 2   | No tests                                                            | Project-wide              | 🟡 Medium  | Open   |
+| 3   | `catchAll` in persistence could mask unexpected errors              | `persistence.ts:37,66,79` | 🟢 Low     | Open   |
+| 4   | No cache eviction — unbounded (low risk)                            | `loader.ts:18,176`        | 🟢 Low     | Open   |
+| 5   | `expandHome` uses `process.env.HOME` not `os.homedir()`; no `~\`    | `soul-fs.ts:10-15`        | 🟢 Low     | Open   |
+| 6   | `resources_discover` return type missing `skillPaths`, `themePaths` | `events.ts:12-14`         | 🟢 Low     | Open   |
+| 7   | No runtime disposal on extension reload                             | `soul.ts:28`              | 🟢 Low     | Open   |
+| 8   | Duplicated JSDoc comment block                                      | `soul-fs.ts:17-22`        | 🟢 Trivial | Open   |
+| 9   | Error boundary discipline — clean                                   | All `Effect.gen`          | ✅ Clean   | —      |
+| 10  | Ref immutability — correct                                          | `loader.ts:176`           | ✅ Clean   | —      |
+| 11  | Empty directory handling — correct                                  | `loader.ts:185-216`       | ✅ Clean   | —      |
+| 12  | Permission error handling — correct                                 | Various                   | ✅ Clean   | —      |
+| 13  | Thread safety via Ref — atomic, TOCTOU harmless                     | `loader.ts:72-77,176`     | ✅ Clean   | —      |
+| 14  | Event handler return types — mostly correct                         | `events.ts`               | ✅ Clean   | —      |
+| 15  | Memory leaks — no leaking patterns                                  | Project-wide              | ✅ Clean   | —      |
+| 16  | Compilation — zero errors                                           | `tsc --noEmit`            | ✅ Clean   | —      |
+
+===== FILE: review-spec-compliance.md =====
+# SoulSpec v0.5 Compliance & Data Correctness Review
+
+**Generated:** 2026-05-15
+**Reviewer:** Bodhisattva Coder (review subagent)
+**Scope:** SoulSpec Pi Extension Effect TS implementation
+**Compilation:** `tsc --noEmit --strict` passes (exit 0)
+
+---
+
+## OVERVIEW
+
+| Severity        | Count          |
+| --------------- | -------------- |
+| 🚫 BLOCKER      | 3              |
+| 🔴 MUST FIX     | 3              |
+| 🟡 SHOULD FIX   | 2              |
+| 🟢 NICE TO HAVE | 3              |
+| ✅ CORRECT      | Multiple areas |
+
+---
+
+## 🚫 BLOCKER #1: Missing `parseManifest` — no camelCase→snake_case mapping
+
+**Root cause of 3 BLOCKER and 1 MUST FIX.** The new `loader.ts` reads `soul.json` via a direct JSON cast instead of a field-mapping `parseManifest` as the reference does.
+
+### Evidence
+
+**`loader.ts:84`** — no parseManifest call:
+
+```ts
+const manifest = yield * readJsonFile<SoulManifest>(fs, manifestPath);
+```
+
+**`soul-fs.ts:27-33`** — `readJsonFile` does a raw `JSON.parse` + cast:
+
+```ts
+return fs.readFileString(soulPath).pipe(
+  Effect.flatMap((content: string) =>
+    Effect.try({
+      try: () => JSON.parse(content) as T, // <-- DIRECT CAST
+      catch: (cause) => new ManifestParseError({ path: soulPath, cause }),
+    }),
+  ),
+);
+```
+
+### Reference vs current
+
+The reference `src/.source/soul.ts:342-483` (`parseManifest`) maps every camelCase JSON field to its snake_case TS counterpart. **These 15+ mappings are entirely missing from the new loader:**
+
+| camelCase JSON field (spec)                 | snake_case TS field                  | Reference map (line)      |
+| ------------------------------------------- | ------------------------------------ | ------------------------- |
+| `specVersion`                               | `spec_version`                       | `.source/soul.ts:458`     |
+| `displayName`                               | `display_name`                       | `.source/soul.ts:460`     |
+| `allowedTools`                              | `allowed_tools`                      | `.source/soul.ts:468`     |
+| `recommendedSkills` / `skills` (legacy)     | `recommended_skills`                 | `.source/soul.ts:361-373` |
+| `files.userTemplate`                        | `files.user_template`                | `.source/soul.ts:383`     |
+| `supersededBy`                              | `superseded_by`                      | `.source/soul.ts:474`     |
+| `interactionMode`                           | `interaction_mode`                   | `.source/soul.ts:477`     |
+| `compatibility.minTokenContext`             | `compatibility.min_token_context`    | `.source/soul.ts:357`     |
+| `hardwareConstraints.*`                     | `hardware_constraints.*`             | `.source/soul.ts:402-411` |
+| `safety.physical.contactPolicy`             | `safety.physical.contact_policy`     | `.source/soul.ts:419`     |
+| `safety.physical.emergencyProtocol`         | `safety.physical.emergency_protocol` | `.source/soul.ts:420`     |
+| `safety.physical.operatingZone`             | `safety.physical.operating_zone`     | `.source/soul.ts:421`     |
+| `safety.physical.maxSpeed`                  | `safety.physical.max_speed`          | `.source/soul.ts:422`     |
+| `sensors` (keyed object `{"lidar": {...}}`) | `Sensor[]` (array with `name`)       | `.source/soul.ts:429-440` |
+| `actuators` (keyed object)                  | `Actuator[]` (array with `name`)     | `.source/soul.ts:443-455` |
+| `hardwareConstraints.mobility` (string)     | `mobility: Mobility` (enum)          | `.source/soul.ts:408`     |
+| `environment` (string)                      | `environment: Environment` (enum)    | `.source/soul.ts:476`     |
+
+### Impact
+
+Any spec-compliant `soul.json` using camelCase field names will have **all of the above fields silently set to `undefined`**. The manifest will appear to load without error but will be unusable — names, descriptions, display names, licenses, versions, and all embodied agent fields will be missing.
+
+### Fix required
+
+Add a `parseManifest` equivalent — either as a separate function in `loader.ts` or as a new exported function in `soul-fs.ts`. It must:
+
+1. Map every camelCase JSON field to its snake_case TS counterpart
+2. Apply defaults for optional fields (see BLOCKER #2)
+3. Handle legacy `skills: string[]` format (see BLOCKER #3)
+4. Convert keyed sensor/actuator objects to arrays (see MUST FIX #4)
+5. Map string enum values to TS enum members
+6. Return `SoulManifest`-typed result
+
+---
+
+## 🚫 BLOCKER #2: Missing default values for all optional fields
+
+**Same root cause** as BLOCKER #1 — without `parseManifest`, **no defaults are applied**.
+
+### Reference defaults (`.source/soul.ts:457-473`)
+
+| TS field       | Reference default | Current if missing | Impact                                                  |
+| -------------- | ----------------- | ------------------ | ------------------------------------------------------- |
+| `spec_version` | `"0.5"`           | `undefined`        | Version check fails                                     |
+| `name`         | `"unknown"`       | `undefined`        | Soul name missing                                       |
+| `display_name` | `"Unknown"`       | `undefined`        | Empty header in output                                  |
+| `version`      | `"1.0.0"`         | `undefined`        | Version display broken                                  |
+| `description`  | `""`              | `undefined`        | Renders "undefined" in prompt                           |
+| `author.name`  | `"Unknown"`       | `undefined`        | Author display broken                                   |
+| `license`      | `"MIT"`           | `undefined`        | License display broken                                  |
+| `category`     | `"general"`       | `undefined`        | Category display broken                                 |
+| `files.soul`   | `"SOUL.md"`       | `undefined`        | SOUL.md path is empty string → loader skips read        |
+| `deprecated`   | `false`           | `undefined`        | Boolean check on undefined is truthy-falsey but fragile |
+
+**Evidence**: `loader.ts:84` casts directly; no defaults are applied before or after.
+
+### Impact
+
+Every field listed above will be `undefined` if absent from `soul.json`, causing runtime display issues in the `system-prompt.ts` builder, `tools.ts` info formatter, and `commands.ts` soul listing.
+
+### Fix
+
+These defaults must be part of the `parseManifest` implementation.
+
+---
+
+## 🚫 BLOCKER #3: Legacy `skills: string[]` format not accepted
+
+**Reference** (`.source/soul.ts:361-373`):
+
+```ts
+const skillsData = data.recommendedSkills || data.skills || [];
+for (const skill of skillsData) {
+  if (typeof skill === "string") {
+    recommendedSkills.push({ name: skill, required: false });
+  } else {
+    recommendedSkills.push({
+      name: skill.name,
+      version: skill.version,
+      required: skill.required || false,
+    });
+  }
+}
+```
+
+**Current**: `loader.ts:84` — direct cast, no legacy handling.
+
+The spec says tools **MUST** accept the legacy `skills: string[]` format. Without conversion code, a `soul.json` with `"skills": ["skill1", "skill2"]` will result in `recommended_skills` being `undefined` or type-mismatched.
+
+### Impact
+
+Any soul.json using the legacy `skills` format (instead of `recommendedSkills`) will have empty recommended skills. This affects backward compatibility with older soul packages.
+
+### Fix
+
+Include the legacy format handling in the `parseManifest` implementation.
+
+---
+
+## 🔴 MUST FIX #4: Sensor/actuator keyed-object→array conversion missing
+
+**Reference** (`.source/soul.ts:429-455`):
+
+```ts
+// Sensors: {"lidar": {"type": "2D", "range": "10m"}} → [{name:"lidar", type:"2D", range:"10m"}]
+const sensors: Sensor[] = [];
+for (const [name, sensorData] of Object.entries(data.sensors || {})) {
+  sensors.push({ name, type: sensorData.type, ... });
+}
+// Same pattern for actuators
+```
+
+**Current**: No conversion — `types.ts:94-113` defines `Sensor` and `Actuator` interfaces as arrays with a `name` field, but `loader.ts:84` does no keyed→array conversion.
+
+**Spec format**: Keyed objects (`{"lidar": {"type": "2D"}}`) — this is the standard JSON representation.
+**Types format**: Arrays with `name` field (`[{name:"lidar", type:"2D"}]`).
+
+**Evidence**: `loader.ts:84`, `types.ts:94-113`, `.source/soul.ts:429-455`.
+
+### Impact
+
+If a spec-compliant `soul.json` uses keyed sensors/actuators, the manifests `sensors` and `actuators` arrays will be empty or contain wrong-format data. The `soul_info` tool renders sensors/actuators via `tools.ts:229-238` (hardware constraints section), so this information would be silently missing.
+
+### Fix
+
+Add keyed-object→array conversion for sensors and actuators in `parseManifest`.
+
+---
+
+## 🔴 MUST FIX #5: No `spec_version` validation
+
+**Spec requirement**: `spec_version` must be one of `"0.3"`, `"0.4"`, `"0.5"`.
+
+**Evidence**: No validation anywhere:
+
+- `loader.ts`: No version check in `load()` or `readJsonFile()`
+- `types.ts`: No `SpecVersionError` error type defined
+- No validation function exists in any source file
+
+### Impact
+
+Souls declaring `"0.2"` or `"invalid"` as spec_version will load without warning. Downstream code may misbehave when consuming fields not present in older spec versions.
+
+### Fix
+
+Add validation after parseManifest (or during parsing) that rejects non-`"0.3"`/`"0.4"`/`"0.5"` spec_version values. Consider adding a `SpecVersionError` type to `types.ts`.
+
+---
+
+## 🔴 MUST FIX #6: No license SPDX allowlist validation
+
+**Spec requirement**: License must be one of: `Apache-2.0`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `CC-BY-4.0`, `CC0-1.0`, `ISC`, `Unlicense`.
+
+**Evidence**: No license validation exists anywhere in the codebase.
+
+### Impact
+
+Souls with non-standard or proprietary licenses will load without warning, violating the spec's intent that licensed souls follow the allowlist.
+
+### Fix
+
+Add validation during manifest loading that checks `license` against the allowlist and issues a warning (or error) for unlisted licenses.
+
+---
+
+## 🟡 SHOULD FIX #7: Field length/tag-count constraints not enforced
+
+**Spec defines**:
+| Field | Constraint | Current |
+|-------|-----------|---------|
+| `description` | max 160 chars | Not validated |
+| `tags` | max 10 items | Not validated |
+| `disclosure.summary` | max 200 chars | Not validated |
+
+**Evidence**: No validation exists in `loader.ts`, `types.ts`, or any other source file.
+
+These are soft limits per spec semantics — loading should succeed but emit warnings. No warning mechanism exists.
+
+### Impact
+
+Oversized descriptions, excessive tags, and lengthy disclosure summaries may cause truncation or formatting issues in downstream consumers (LLM context windows, UI rendering).
+
+### Fix
+
+Add length validation after parsing, with a warning mechanism. This requires deciding whether to expose warnings through a separate channel (since `Effect.Service` methods currently return `SoulManifest` without a warning list).
+
+---
+
+## 🟡 SHOULD FIX #8: `as T` type assertion in `soul-fs.ts`
+
+**File**: `soul-fs.ts:30`
+
+```ts
+try: () => JSON.parse(content) as T,
+```
+
+### Issue
+
+The `as T` cast bypasses runtime type checking. If the JSON shape doesn't match `SoulManifest`, the error surfaces as `undefined` fields later rather than at parse time. This is the architectural weakness that allows BLOCKER #1 to exist silently.
+
+### Fix
+
+Replace with a discriminatory parse that validates the JSON shape, or at minimum verify that the result is an object with the required top-level fields before returning. Alternatively, combine with `parseManifest` which provides the field mapping and defaulting in one pass.
+
+---
+
+## 🟢 NICE TO HAVE #9: No unit test coverage
+
+**Evidence**: No `.test.ts` or `.spec.ts` files exist in `src/` (verified via `find`).
+
+The `validation-strategy-20260515T115244.md` document defines:
+
+- 7 unit test cases for `buildSystemPrompt`
+- 8 unit test cases for `expandHome`
+- 4 error class tests
+- 25 edge cases (EC1-EC25)
+- Integration test patterns using `FileSystem.makeNoop`
+
+None of these are implemented.
+
+### Impact
+
+No regression protection. The pre-existing fixes (verified as 12 resolved issues) are only verifiable by manual inspection. Future changes risk reintroducing regressions.
+
+### Fix
+
+Add test files starting with Priority 1 (`buildSystemPrompt` — pure function, no Effect dependencies) and Priority 2 (`expandHome` — sync boundary function).
+
+---
+
+## 🟢 NICE TO HAVE #10: Enum string mapping skipped
+
+**Reference** (`.source/soul.ts:408,419,476`):
+
+```ts
+mobility: Mobility[data.hardwareConstraints.mobility] || Mobility.STATIONARY;
+contact_policy: ContactPolicy[data.safety.physical.contactPolicy] || ContactPolicy.NO_CONTACT;
+environment: Environment[data.environment] || Environment.VIRTUAL;
+interaction_mode: InteractionMode[data.interactionMode] || InteractionMode.TEXT;
+```
+
+**Current**: No enum mapping exists. The string values from JSON are stored directly into enum-typed fields. TypeScript treats this as valid because the enum const objects have string literal types `("virtual"|"embodied"|"hybrid")` that happen to match. BUT: if the JSON uses enum member names (e.g., `"EMBODIED"`) instead of values (`"embodied"`), the mapping breaks.
+
+### Impact
+
+Low for well-formed soul.json files that use the string literal values directly. Potentially broken for files using enum member names.
+
+### Fix
+
+Add enum mapping in `parseManifest` using the reference pattern (`EnumType[input] || EnumType.DEFAULT`).
+
+---
+
+## 🟢 NICE TO HAVE #11: No `SpecVersionError` or validation error types
+
+**Current error types** (defined in `types.ts:163-178`):
+
+- `SoulNotFoundError` — soul not found
+- `ManifestParseError` — JSON parse failure
+- `FileSystemError` — I/O error
+- `SoulLoadError` — union of all 3
+
+**Missing** (per spec-compliance doc):
+
+- `SpecVersionError` — invalid spec_version
+- `LicenseValidationError` — blocked SPDX identifier
+- `TagCountError` — >10 tags
+- `DescriptionLengthError` — >160 chars
+- `SoulScanValidationError` — embodied soul without safety declarations
+
+### Fix
+
+Add at minimum `SpecVersionError` in `types.ts` and use it in validation. Others are lower priority.
+
+---
+
+## ✅ CORRECT: Areas with no issues
+
+### Embodied agent types (`types.ts:5-32, 74-113, 135-140`)
+
+All v0.5 embodied fields are correctly represented:
+
+- `Environment` enum (lines 5-10): `virtual`, `embodied`, `hybrid`
+- `InteractionMode` enum (lines 12-18): `text`, `voice`, `multimodal`, `gesture`
+- `ContactPolicy` enum (lines 20-25): `no-contact`, `gentle-contact`, `full-contact`
+- `Mobility` enum (lines 27-32): `stationary`, `mobile`, `limited`
+- `HardwareConstraints` interface (lines 74-81): all 6 fields present
+- `PhysicalSafety` interface (lines 83-88): all 4 fields present
+- `Safety` / `Sensor` / `Actuator`: all present and correct
+- `SoulManifest` embodied fields (lines 135-140): all 6 fields present
+
+### Progressive disclosure levels (`loader.ts:69-179`, `system-prompt.ts:15-98`)
+
+The 3-level progressive disclosure matches the spec exactly:
+
+- Level 1: `soul.json` only
+- Level 2: + `SOUL.md` and `IDENTITY.md`
+- Level 3: + agents, style, heartbeat, user_template, examples
+
+Verified: `loader.ts:100-115` (level 2), `loader.ts:117-164` (level 3), `system-prompt.ts:23-28` (level 1), `system-prompt.ts:31-39` (level 2), `system-prompt.ts:42-68` (level 3)
+
+### System prompt embodied rendering (`system-prompt.ts:70-95`)
+
+All non-virtual fields are correctly gated and rendered:
+
+- `environment` check (line 71)
+- `interaction_mode` check (line 75)
+- `hardware_constraints` capabilities list (lines 79-89)
+- `safety.physical.contact_policy` (lines 91-94)
+
+### Error types sufficiency (`types.ts:163-178`)
+
+The 3 error types + 1 union cover the core domain: resolution failure, parse failure, I/O failure. Adequate for current functionality.
+
+### `FileSystem` import path (`soul-fs.ts:1`, `loader.ts:2`, `persistence.ts:2`)
+
+All three files correctly use `@effect/platform/FileSystem` (not the namespace import from `@effect/platform`). ✅ FIXED from earlier regression.
+
+### `ManagedRuntime` type args (`tools.ts:8`, `commands.ts:8`, `events.ts:9`)
+
+All correctly use `ManagedRuntime<any, any>`. ✅ FIXED from earlier regression.
+
+### `session_start` event filtering (`events.ts:23`)
+
+Correctly filters to `"startup"` and `"new"` only. ✅ FIXED from earlier regression.
+
+### `resources_discover` path order (`events.ts:79-84`)
+
+Project-local paths first, then global. ✅ FIXED from earlier regression.
+
+### `before_agent_start` appending behavior (`events.ts:124-126`)
+
+Correctly appends with `\n\n---\n` separator. ✅ FIXED from earlier regression.
+
+### Command/Ui notification usage (`commands.ts:27,51,142,154,156,191,227,236,247`)
+
+All `ctx.ui.notify()` calls — no `console.log()`. ✅ FIXED from earlier regression.
+
+### Error suggestion handling (`commands.ts:214-245`, `tools.ts:60-105`)
+
+Both `/soul` command and `load_soul`/`soul_info` tools provide "Did you mean?" suggestions. ✅ FIXED from earlier regression.
+
+---
+
+## SUMMARY: Fix priorities
+
+| Priority | Issue                                     | Files affected                          | Depends on            |
+| -------- | ----------------------------------------- | --------------------------------------- | --------------------- |
+| 🚫 P0    | Add `parseManifest`                       | `loader.ts`, `soul-fs.ts` (or new file) | —                     |
+| 🚫 P0    | Default values                            | Part of `parseManifest`                 | P0 above              |
+| 🚫 P0    | Legacy `skills` format                    | Part of `parseManifest`                 | P0 above              |
+| 🔴 P1    | Sensor/actuator keyed→array               | Part of `parseManifest`                 | P0 above              |
+| 🔴 P1    | `spec_version` validation                 | `loader.ts` + possibly `types.ts`       | P0 (to get the field) |
+| 🔴 P1    | License allowlist validation              | `loader.ts`                             | P0 (to get the field) |
+| 🟡 P2    | Length constraints (desc/tags/disclosure) | `loader.ts`                             | P0                    |
+| 🟡 P2    | Replace `as T` cast                       | `soul-fs.ts:30`                         | —                     |
+| 🟢 P3    | Unit tests                                | New `*.test.ts` files                   | —                     |
+| 🟢 P3    | Enum string mapping                       | Part of `parseManifest`                 | P0                    |
+| 🟢 P3    | Validation error types                    | `types.ts`                              | P0                    |
+
+---
+
+## Key file:line references
+
+| Finding                                  | File                  | Line(s)               |
+| ---------------------------------------- | --------------------- | --------------------- |
+| No parseManifest — direct cast           | `loader.ts`           | 84                    |
+| No defaults or field mapping             | `soul-fs.ts`          | 27-33                 |
+| `as T` type assertion                    | `soul-fs.ts`          | 30                    |
+| Ref: `parseManifest` with 15+ maps       | `src/.source/soul.ts` | 342-483               |
+| Ref: Legacy skills format handling       | `src/.source/soul.ts` | 361-373               |
+| Ref: Sensor keyed→array conversion       | `src/.source/soul.ts` | 429-440               |
+| Ref: Actuator keyed→array conversion     | `src/.source/soul.ts` | 443-455               |
+| Ref: Default values                      | `src/.source/soul.ts` | 457-473               |
+| Ref: Enum string→member mapping          | `src/.source/soul.ts` | 408, 419, 476-477     |
+| All embodied agent types present         | `types.ts`            | 5-32, 74-113, 135-140 |
+| 3-level progressive disclosure correct   | `loader.ts`           | 69-179                |
+| System prompt embodied rendering correct | `system-prompt.ts`    | 70-95                 |
+| Error types defined                      | `types.ts`            | 163-178               |
+| No test files exist                      | `src/`                | (verified via find)   |
+| No spec_version validation               | `loader.ts`           | (entire file)         |
+| No license validation                    | `loader.ts`           | (entire file)         |
+| No length/tag validation                 | `loader.ts`           | (entire file)         |
