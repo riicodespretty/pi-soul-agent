@@ -23,10 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local-only: vendored sources, agent scaffolding, and task artifacts
+# Local-only: vendored sources and agent scaffolding
 src/.effect/
 src/.source/
 .agents/
+# Agent-generated scratch (task-plan outputs, review/research/oracle/scout notes).
+# Canonical copies migrated to git notes: refs/notes/docs-*  — keep ignored so regenerated scratch is never committed.
 docs/
 review-*.md
 research*.md
