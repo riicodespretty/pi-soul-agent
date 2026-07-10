@@ -5,10 +5,6 @@ import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import os from "node:os";
 import { resolveOsHomeDir, expandHome } from "../../src/services/soul-fs";
 
-// ---------------------------------------------------------------------------
-// resolveOsHomeDir — pure function, no Effect context needed
-// ---------------------------------------------------------------------------
-
 describe("resolveOsHomeDir", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -39,14 +35,9 @@ describe("resolveOsHomeDir", () => {
 
   it("handles empty HOME gracefully", () => {
     vi.stubEnv("HOME", "");
-    // Empty string is not null, so it's returned as-is
     expect(resolveOsHomeDir(process.env)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// expandHome — Effect that uses Path service
-// ---------------------------------------------------------------------------
 
 describe("expandHome", () => {
   afterEach(() => {

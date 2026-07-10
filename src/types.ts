@@ -1,7 +1,5 @@
 import { ManagedRuntime, ParseResult, Schema as S } from "effect";
 
-// ── Enums as const objects (erasableSyntaxOnly: true forbids `enum`) ──
-
 export const EnvironmentSchema = S.Enums({
   VIRTUAL: "virtual",
   EMBODIED: "embodied",
@@ -35,16 +33,11 @@ export const MobilitySchema = S.Enums({
 export const Mobility = MobilitySchema.enums;
 export type Mobility = S.Schema.Type<typeof MobilitySchema>;
 
-// ── Utility ──
-
 export type DeepPartial<T> = T extends (infer U)[]
   ? DeepPartial<U>[]
   : T extends object
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
-
-// ── Schema definitions (source of truth for all soul.json data types) ──
-// See: https://github.com/clawsouls/soulspec/blob/main/soul-spec-v0.5.md
 
 export const AuthorSchema = S.Struct({
   name: S.optionalWith(S.String, { default: () => "Unknown" }),
@@ -110,8 +103,6 @@ export const SafetySchema = S.Struct({
 });
 export type Safety = S.Schema.Type<typeof SafetySchema>;
 
-// ── Skills (with string→object normalization) ──
-
 const SkillEntryEncodedSchema = S.Union(
   S.String,
   S.Struct({
@@ -143,8 +134,6 @@ export const RecommendedSkillsSchema = S.transformOrFail(
     encode: ParseResult.succeed,
   },
 );
-
-// ── Sensors (inject name from record key) ──
 
 const SensorEntryEncodedSchema = S.Union(
   S.Boolean,
@@ -186,8 +175,6 @@ export const SensorsSchema = S.transformOrFail(
   },
 );
 
-// ── Actuators (inject name from record key) ──
-
 const ActuatorEntryEncodedSchema = S.Struct({
   type: S.optionalWith(S.String, { exact: true }),
   maxSpeed: S.optionalWith(S.String, { exact: true }),
@@ -221,8 +208,6 @@ export const ActuatorsSchema = S.transformOrFail(
     encode: ParseResult.succeed,
   },
 );
-
-// ── Main manifest schema ──
 
 export const SoulManifestDataSchema = S.Struct({
   specVersion: S.optionalWith(S.String, { default: () => "0.5" }),
@@ -271,9 +256,6 @@ export const SoulManifestDataSchema = S.Struct({
 });
 export type SoulManifestData = S.Schema.Type<typeof SoulManifestDataSchema>;
 
-// ── Composite types ──
-
-/** Fields loaded from disk at runtime (not present in soul.json on disk). */
 export interface WritableSoulManifestProps {
   soulContent?: string;
   identityContent?: string;
@@ -286,14 +268,8 @@ export interface WritableSoulManifestProps {
   avatarPath?: string;
 }
 
-/** Main SoulSpec manifest — on-disk fields from schema + runtime-loaded content. */
 export interface SoulManifest extends WritableSoulManifestProps, SoulManifestData {}
 
-/** Schema for persisted active soul entry (runtime data, not from soul.json). */
-// Heartbeat mode widens to off | lite | full | positive-integer N (ADR-0001):
-// a custom N fires every N turns from activation. Mode words decode first; a
-// positive whole number decodes via the Int+positive branch (rejects 0,
-// negative, fractional). Persisted with the Active Soul so a custom N round-trips.
 export const HeartbeatModeSchema = S.Union(
   S.Literal("off", "lite", "full"),
   S.Int.pipe(S.positive()),
@@ -308,14 +284,11 @@ export const ActiveSoulSchema = S.Struct({
 });
 export type ActiveSoul = S.Schema.Type<typeof ActiveSoulSchema>;
 
-/** Parsed /soul command arguments — discriminated union by action. */
 export const ParsedSoulCommandSchema = S.Union(
   S.Struct({ action: S.Literal("help") }),
   S.Struct({ action: S.Literal("deactivate") }),
   S.Struct({ action: S.Literal("activate"), soulName: S.String, level: S.Number }),
-  // A rejected input (bad heartbeat value, etc.) carries a user-facing message.
   S.Struct({ action: S.Literal("error"), message: S.String }),
-  // `warning` is an accepted-but-notable notice (e.g. a heartbeat interval > 1000).
   S.Struct({
     action: S.Literal("heartbeat"),
     mode: HeartbeatModeSchema,
@@ -324,5 +297,4 @@ export const ParsedSoulCommandSchema = S.Union(
 );
 export type ParsedSoulCommand = S.Schema.Type<typeof ParsedSoulCommandSchema>;
 
-/** Application runtime type for the Pi extension bridge */
 export type AppRuntime = ManagedRuntime.ManagedRuntime<any, any>;

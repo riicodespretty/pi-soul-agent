@@ -2,23 +2,9 @@ import type { SoulManifest } from "./types";
 import { Environment, InteractionMode } from "./types";
 import { Option } from "effect";
 
-/**
- * Build a system prompt string from a SoulSpec manifest.
- *
- * Mirrors the readAndSet pattern in loader.ts: all branching logic
- * lives in a single `push` helper — fromNullable wraps the optional,
- * a single filter combines all guards, map formats and pushes.
- * The function body is a flat sequence of single-line helper calls.
- *
- * @param manifest - The loaded soul manifest with optional content fields
- * @param level - Progressive disclosure level (1-3)
- * @param includeIdentity - Whether to include identity content (default: true)
- * @returns Formatted system prompt string
- */
 export function buildSystemPrompt(manifest: SoulManifest, level: number = 2): string {
   const parts: string[] = [];
 
-  // ── Helper ────────────────────────────────────────────────────────────────────
   const push = (
     prefix: string,
     content: string | null | undefined,

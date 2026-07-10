@@ -9,8 +9,6 @@ import { vi } from "vitest";
 
 vi.stubEnv("HOME", "/Users/test");
 
-// ── Pure Unit Tests: parseSoulCommandArgs ─────────────────────────────────
-
 describe("parseSoulCommandArgs", () => {
   it("parses '--clear' as deactivate", () => {
     const result = parseSoulCommandArgs("--clear");
@@ -103,8 +101,6 @@ describe("parseSoulCommandArgs", () => {
       expect(result.level).toBe(1);
     }
   });
-
-  // ── Custom heartbeat interval (issue #5) ──────────────────────────────────
 
   it("parses '--heartbeat 10' as a custom integer interval", () => {
     const result = parseSoulCommandArgs("--heartbeat 10");

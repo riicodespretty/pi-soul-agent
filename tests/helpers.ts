@@ -6,20 +6,11 @@ import { SoulSpecLoader, SOUL_SEARCH_PATHS } from "../src/loader";
 import { expandHome, parseManifest } from "../src/services/soul-fs";
 import type { DeepPartial, SoulFiles, SoulManifest, SoulManifestData } from "../src/types";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/**
- * Soul definition for building mock FS layers.
- * Any field from SoulManifestData can be provided; the rest get defaults.
- * Content files referenced in `files` are auto-created with empty content.
- */
 export type MockSoulManifest = DeepPartial<SoulManifestData> & {
   readonly name: string;
-  /** Search path to place this soul in (default: ~/.pi/agent/souls) */
   readonly soulPath?: string;
 };
 
-// ── Source of truth: typed default manifest — matches what a real soul.json looks like ──
 export const DEFAULT_SOURCE: SoulManifestData = {
   specVersion: "0.5",
   name: "senior-devops-engineer",
@@ -68,15 +59,7 @@ export const DEFAULT_SOURCE: SoulManifestData = {
   actuators: {},
 };
 
-/**
- * Derived SoulManifest via parseManifest.
- * NOTE: Content fields (soulContent, identityContent, etc.) are not included
- * because parseManifest only parses the JSON manifest — loadSoul sets them
- * at runtime by reading content files.
- */
 export const MOCK_SOUL_MANIFEST: SoulManifest = parseManifest(DEFAULT_SOURCE);
-
-// ── Internal helpers ──────────────────────────────────────────────────────────
 
 const enoent = (method: string, path: string) =>
   new SystemError({
@@ -87,32 +70,13 @@ const enoent = (method: string, path: string) =>
     pathOrDescriptor: path,
   });
 
-// ── Mock builder ──────────────────────────────────────────────────────────────
-
-/**
- * Build a mock FileSystem.layerNoop from the given soul definitions.
- *
- * Every mock starts with a directory skeleton for all 4 search paths.
- * Each soul gets:
- *   - An entry in its parent search path's directory listing
- *   - Its own directory (for listing & exists checks)
- *   - A `soul.json` file (auto-generated + merged with explicit manifest)
- *   - Content files auto-created from `manifest.files` + `manifest.examples`
- *
- * @example
- * ```ts
- * createMockFsLayer([{ name: "my-soul", files: { soul: "SOUL.md" } }])
- * ```
- */
 export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFEST]) {
   const expand = (p: string) => Effect.runSync(Effect.provide(expandHome(p), NodePathLayer));
 
-  // 1. Directory skeleton — all search paths as empty dirs
   const dirs: Record<string, string[]> = {};
   for (const p of SOUL_SEARCH_PATHS) dirs[expand(p)] = [];
   const mkdir = (p: string) => (dirs[p] ??= []);
 
-  // 2. File contents (soul.json + content files) for each soul
   const fileSystem: Record<string, string> = {};
 
   for (const soul of souls) {

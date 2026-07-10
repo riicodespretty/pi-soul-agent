@@ -6,18 +6,11 @@ import { expandHome, readJsonFile } from "./services/soul-fs";
 import { logError } from "./logger";
 import { Path } from "@effect/platform/Path";
 
-/** Persistence file path (tilde expanded at runtime) */
 const ACTIVE_SOUL_PATH = "~/.pi/agent/.active-soul.json";
 
-/**
- * Create a FileSystemError with message and optional cause.
- * Shorthand for `new FileSystemError({ message, ...(cause ? { cause } : {}) })`.
- */
 function persistenceError(message: string, cause?: unknown): FileSystemError {
   return new FileSystemError({ message, cause });
 }
-
-// ── Service ───────────────────────────────────────────────────────────────────
 
 export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>()(
   "app/ActiveSoulPersistence",
@@ -25,16 +18,11 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
     effect: Effect.gen(function* () {
       const fs = yield* FileSystem;
 
-      /**
-       * Save the active soul to disk.
-       * Creates the parent directory if it doesn't exist (mkdir failure is not fatal).
-       */
       const save = (soulName: string, level: number, heartbeatMode?: HeartbeatMode) =>
         Effect.gen(function* () {
           const path = yield* Path;
           const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
 
-          // mkdir may fail if the directory already exists — not fatal
           yield* fs
             .makeDirectory(path.dirname(filePath), { recursive: true })
             .pipe(Effect.catchAll(() => Effect.void));
@@ -52,10 +40,6 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           ),
         );
 
-      /**
-       * Load the active soul from disk.
-       * Returns Option.none() if file doesn't exist, is corrupt, or is not valid ActiveSoul data.
-       */
       const load = () =>
         Effect.gen(function* () {
           const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
@@ -71,10 +55,6 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           ),
         );
 
-      /**
-       * Clear (delete) the active soul file.
-       * Removal failure is not fatal — the file may not exist.
-       */
       const clear = () =>
         Effect.gen(function* () {
           const filePath = yield* expandHome(ACTIVE_SOUL_PATH);
@@ -86,9 +66,6 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           ),
         );
 
-      /**
-       * Update the heartbeat mode without changing the soul name or level.
-       */
       const updateHeartbeatMode = (mode: HeartbeatMode) =>
         Effect.gen(function* () {
           const current = yield* load();

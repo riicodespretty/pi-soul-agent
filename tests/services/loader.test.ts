@@ -8,13 +8,9 @@ import { SoulSpecLoader } from "../../src/loader";
 import { SoulLoadError } from "../../src/errors";
 import { createMockFsLayer, DEFAULT_SOURCE } from "../helpers";
 
-// Stub HOME so expandHome("~/...") resolves to paths matching the mock FS.
 vi.stubEnv("HOME", "/Users/test");
 
-/** Expanded first search path (matches SOUL_SEARCH_PATHS[0] with test HOME). */
 const FIRST_PATH = "/Users/test/.pi/agent/souls";
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 const enoent = (method: string, path: string) =>
   new SystemError({
@@ -34,18 +30,12 @@ const permDenied = (method: string, path: string) =>
     pathOrDescriptor: path,
   });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// EXISTING TESTS (ported from the original loader.test.ts)
-// ═══════════════════════════════════════════════════════════════════════════
-
 describe("SoulSpecLoader", () => {
-  // getSoul auto-loads on cache miss (no 2-step dance)
   it.effect("getSoul auto-loads when soul not in cache", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
       const soul = yield* loader.getSoul(DEFAULT_SOURCE.name, 1);
       expect(soul.name).toBeDefined();
-      // Cache state: second call should hit cache, not re-read from disk
       const cached = yield* loader.getSoul(DEFAULT_SOURCE.name, 1);
       expect(cached.name).toBeDefined();
     }).pipe(
@@ -55,7 +45,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // cache never downgrades
   it.effect("getSoul does not downgrade cache level", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -70,7 +59,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // getSoul at level 1 returns metadata only
   it.effect("getSoul at level 1 returns metadata-only manifest", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -84,7 +72,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // loadAllSouls returns array of manifests
   it.effect("loadAllSouls returns array of soul manifests", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -99,7 +86,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // error contract — SoulLoadError has ._tag === "SoulLoadError"
   it.effect("getSoul produces SoulLoadError on missing soul", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -113,7 +99,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // basic getSoul smoke test
   it.effect("getSoul returns a result for a known soul", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;
@@ -126,9 +111,6 @@ describe("SoulSpecLoader", () => {
     ),
   );
 
-  // ── Error Path Coverage ─────────────────────────────────────────────────
-
-  // ManifestParseError — invalid JSON produces SoulLoadError
   it.effect("getSoul produces SoulLoadError on malformed JSON", () =>
     Effect.gen(function* () {
       const loader = yield* SoulSpecLoader;

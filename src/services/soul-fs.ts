@@ -5,8 +5,6 @@ import os from "node:os";
 import { SoulManifestDataSchema, type SoulManifest } from "../types";
 import { FileSystemError, ManifestParseError } from "../errors";
 
-// ── Helpers ──
-
 export function resolveOsHomeDir(env: NodeJS.ProcessEnv) {
   return Option.getOrElse(
     Option.firstSomeOf([Option.fromNullable(env.HOME), Option.fromNullable(env.USERPROFILE)]),
@@ -22,15 +20,7 @@ export function expandHome(p: string) {
   });
 }
 
-// ── Parsing ──
-
-/**
- * Parse a raw JSON data object (from soul.json on disk) into a typed SoulManifest.
- * All field schemas are defined in `@/src/types.ts` as the source of truth.
- * Throws ManifestParseError on invalid data.
- */
 export function parseManifest(raw: Record<string, unknown>): SoulManifest {
-  // Normalize recommended skills: accept both `recommendedSkills` (v0.5+) and legacy `skills`
   const skillsInput = Array.isArray(raw.recommendedSkills)
     ? raw.recommendedSkills
     : Array.isArray(raw.skills)
@@ -43,7 +33,6 @@ export function parseManifest(raw: Record<string, unknown>): SoulManifest {
   });
 }
 
-/** Decode a schema from unknown input, throwing ManifestParseError on failure. */
 function decodeOrThrow<A, I>(schema: S.Schema<A, I, never>, input: I): A {
   try {
     return S.decodeUnknownSync(schema)(input);

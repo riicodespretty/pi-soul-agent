@@ -6,40 +6,23 @@ import { ActiveSoulPersistence } from "./persistence";
 import { buildSystemPrompt } from "./system-prompt";
 import { notifyUI } from "./helpers/notify-ui";
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Pure Parsing
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Parse /soul command arguments.
- * Supports: soulname, soulname --level N, --level=N, --help, off|clear|none|default
- * Returns a discriminated union — each action variant has only its relevant fields.
- */
-
 export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
   const trimmed = args.trim();
 
-  // Help
   if (trimmed === "--help" || trimmed === "-h") {
     return { action: "help" };
   }
 
-  // Deactivate (--clear or -c flag)
   if (trimmed === "--clear" || trimmed === "-c") {
     return { action: "deactivate" };
   }
 
-  // Heartbeat mode (--heartbeat off|lite|full|<positive integer N>).
-  // Resolve mode WORDS first (they win over integer parsing), then attempt a
-  // positive-integer parse. Reject 0, negative, fractional, and non-numeric with
-  // a clear message (NOT clamped, unlike --level); warn but ACCEPT values > 1000.
   const hbMatch = /^--heartbeat\s+(\S+)$/i.exec(trimmed);
   if (hbMatch) {
     const arg = hbMatch[1].toLowerCase();
     if (arg === "off" || arg === "lite" || arg === "full") {
       return { action: "heartbeat", mode: arg };
     }
-    // Only bare digits are a positive whole number: rejects "-5", "2.5", "abc".
     if (/^\d+$/.test(arg)) {
       const n = Number.parseInt(arg, 10);
       if (n >= 1) {
@@ -257,9 +240,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         const updateHeartbeatPipeline = Effect.gen(function* () {
           const persistence = yield* ActiveSoulPersistence;
           yield* persistence.updateHeartbeatMode(parsed.mode);
-          // Re-read the active soul to determine its effective level: heartbeat
-          // content only loads at Level 3, so a cadence set below Level 3 persists
-          // but cannot fire until the soul is loaded at Level 3.
+          // Rationale [2] → git notes docs-code-rationale: docs/rationale/commands.md
           const active = yield* persistence.load();
           return Option.isSome(active) ? active.value.level : undefined;
         });
@@ -291,9 +272,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           notifyUI(ctx, levelNotice, "warning");
         }
 
-        // Path-aware, honest timing: off disables; a sub-Level-3 cadence already
-        // got its needs-L3 notice just above (so no next-turn claim here); an
-        // active Level-3 cadence re-anchors and takes effect on the next turn.
+        // Rationale [3] → git notes docs-code-rationale: docs/rationale/commands.md
         const settingMsg =
           parsed.mode === "off"
             ? "Heartbeat reminders disabled."

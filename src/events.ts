@@ -8,71 +8,19 @@ import { expandHome } from "./services/soul-fs";
 import { buildSystemPrompt } from "./system-prompt";
 import { notifyUI } from "./helpers/notify-ui";
 
-/** Local type since ResourcesDiscoverResult is not re-exported from pi-coding-agent */
 interface ResourcesDiscoverResult {
   promptPaths?: string[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Heartbeat Reminder
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * _heartbeatCoordinator is an insurance policy against multiple closures (Pi
- * loads extensions via jiti with moduleCache:false, creating separate closures
- * each with independent counters). Only the first closure to reach a given
- * activation-anchored beat sends the heartbeat; the rest skip. The key is the
- * activation identity plus the beat's turn-count — NOT a session-absolute turn —
- * so it stays correct as the schedule re-anchors on each activation.
- */
 const _heartbeatCoordinator = { servicedKey: null as string | null };
 
-/**
- * The cadence gap lists, prefix-summed from the Activation anchor to get the
- * beats (count 0 = activation, no fire). Only the anchor point and `full`'s
- * shape changed (ADR-0001); `off`/`lite` are as before.
- *
- * `off` never fires. `lite` fires every 6 turns. `full` is a ramp-then-plateau:
- * the mala factors [6, 3, 2, 3] are cumulative POSITIONS (prefix products)
- * 6, 18, 36, 108 — NOT repeating gaps — so the gap list is [6, 12, 18, 72, 108];
- * after the ramp the schedule holds at a steady +108 pulse (108 = 6 × 3 × 2 × 3,
- * the full klesha count). Frequent early grounding tapering to a calm plateau.
- *
- * The plateau is produced by CLAMPING the advance at the last gap (see below),
- * so the final entry (108) repeats forever. A single-entry list (`lite`) is the
- * degenerate case: it clamps immediately and repeats that one gap. A custom
- * positive integer mode N is the same degenerate shape — the gap list is [N],
- * so it fires every N turns from the Activation anchor.
- */
 const HEARTBEAT_INTERVALS: Record<"off" | "lite" | "full", readonly number[]> = {
   off: [],
   lite: [6],
   full: [6, 12, 18, 72, 108],
 };
 
-/**
- * Register the `turn_end` event handler for the heartbeat reminder.
- *
- * Every cadence is measured from the Activation anchor — the turn on which a
- * Soul becomes active — not from session start (ADR-0001). Each turn the handler
- * reads the Active Soul identity (`soul` + `updatedAt`); when it changes, the
- * turn count resets to 0 and the schedule restarts. The activation turn is
- * count 0 and does not itself fire; the first `lite` beat lands 6 turns later.
- *
- * Nothing counts while no Soul is active, so a scheduled turn reached while
- * inactive can no longer freeze the schedule — the session-long wedge of
- * issue #1 is structurally impossible, not merely patched. This supersedes the
- * session-absolute counter and the tick-while-inactive workaround (c8b46f9).
- *
- * Changing a Soul's level or heartbeat mode bumps `updatedAt`, re-anchoring the
- * schedule (a deliberate "re-onboard" from the next turn). Reminders fire only
- * for an active, Level-3 Soul with heartbeat content, and stay hidden from the
- * visible conversation.
- */
 export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppRuntime): void {
-  // Activation-anchored scheduler state. `currentIdentity` is the Active Soul
-  // identity we are anchored to (null = none active); `count` is turns since the
-  // anchor (0 = the activation turn); `intervalIndex`/`nextTurnAt` walk the beats.
   let currentIdentity: string | null = null;
   let count = 0;
   let intervalIndex = 0;
@@ -85,14 +33,10 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       if (!Option.isSome(activeSoul)) return { present: false as const };
 
       const soul = activeSoul.value;
-      // Activation identity: the Soul name plus its updatedAt. Any level or
-      // heartbeat-mode change bumps updatedAt, so identity change re-anchors.
       const identity = `${soul.soul}@${soul.updatedAt}`;
       const mode = soul.heartbeatMode ?? ("lite" as const);
 
-      // The Level-3 + content gate. Disabled, below Level 3, or with no
-      // heartbeat content, the Soul is present (it still anchors the schedule)
-      // but has nothing to send.
+      // Rationale [2] → git notes docs-code-rationale: docs/rationale/events.md
       if (mode === "off" || soul.level < 3) {
         return { present: true as const, identity, mode, content: null };
       }
@@ -151,28 +95,19 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       typeof result.mode === "number" ? [result.mode] : HEARTBEAT_INTERVALS[result.mode];
     if (intervals.length === 0 || count !== nextTurnAt) return;
 
-    // Advance to the next beat, CLAMPING the index at the last gap so the final
-    // entry repeats forever: `full` ramps (6, 12, 18, 72) then holds at +108;
-    // `lite` (one entry) repeats its single gap. Runs whether or not we actually
-    // send, keeping the cadence ticking.
+    // Rationale [3] → git notes docs-code-rationale: docs/rationale/events.md
     intervalIndex = Math.min(intervalIndex + 1, intervals.length - 1);
     nextTurnAt += intervals[intervalIndex];
 
     // Only an active, Level-3 Soul with heartbeat content actually sends.
     if (result.content === null) return;
 
-    // Module-level dedup: if a sibling closure already serviced this exact
-    // activation-anchored beat, skip the send. Keyed on identity + count (not a
-    // session-absolute turn), and recorded only AFTER an actual send.
+    // Rationale [4] → git notes docs-code-rationale: docs/rationale/events.md
     const beatKey = `${result.identity}#${count}`;
     if (_heartbeatCoordinator.servicedKey === beatKey) return;
     _heartbeatCoordinator.servicedKey = beatKey;
 
-    // No deliverAs option: when the agent is idle (not streaming), this appends
-    // immediately to agent.state.messages and persists to the session, rather
-    // than queueing in _pendingNextTurnMessages to be flushed on the next user
-    // message. Wrap in XML tags so the LLM can distinguish this as an automatic
-    // system reminder rather than a direct user message.
+    // Rationale [5] → git notes docs-code-rationale: docs/rationale/events.md
     pi.sendMessage({
       customType: "soul-heartbeat-reminder",
       content: `<soul-heartbeat-reminder type="grounding" no-response>\n${result.content}\n</soul-heartbeat-reminder>`,

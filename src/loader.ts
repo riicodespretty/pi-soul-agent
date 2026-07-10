@@ -5,7 +5,6 @@ import { NoSoulsFoundError, SoulNotFoundError, SoulLoadError } from "./errors";
 import { expandHome, parseManifest, readJsonFile, readTextFile } from "./services/soul-fs";
 import { logError } from "./logger";
 
-/** Soul search paths (with tilde — expanded at runtime) */
 export const SOUL_SEARCH_PATHS = [
   "~/.pi/agent/souls",
   "~/.openclaw/souls/clawsouls",
@@ -13,18 +12,12 @@ export const SOUL_SEARCH_PATHS = [
   "./souls",
 ] as const;
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 interface CacheEntry {
   readonly manifest: SoulManifest;
   readonly soulPath: string;
   readonly cachedLevel: number;
 }
 
-/**
- * Create a SoulLoadError with message and optional cause.
- * Shorthand for `new SoulLoadError({ message, ...(cause ? { cause } : {}) })`.
- */
 function soulLoadError(message: string, cause?: unknown): SoulLoadError {
   return new SoulLoadError({
     message,
@@ -32,12 +25,6 @@ function soulLoadError(message: string, cause?: unknown): SoulLoadError {
   });
 }
 
-/**
- * Filter a manifest to only include content fields up to the requested level.
- * Level 1: metadata only (no content fields)
- * Level 2: soulContent + identityContent
- * Level 3: all content fields
- */
 export function filterByLevel(manifest: SoulManifest, level: number): SoulManifest {
   const result = { ...manifest };
 
@@ -58,14 +45,11 @@ export function filterByLevel(manifest: SoulManifest, level: number): SoulManife
   return result;
 }
 
-// ── Service ───────────────────────────────────────────────────────────────────
-
 export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSpecLoader", {
   effect: Effect.gen(function* () {
     const fs = yield* FileSystem;
     const cache = yield* Ref.make<Map<string, CacheEntry>>(new Map());
 
-    // ── Internal helpers ─────────────────────────────────────────────────────────
     const resolveSoulPath = (soulName: string) => {
       return Effect.gen(function* () {
         for (const base of SOUL_SEARCH_PATHS) {

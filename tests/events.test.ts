@@ -3,56 +3,24 @@ import { beforeEach, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AppRuntime, HeartbeatMode } from "../src/types";
 
-// ═══════════════════════════════════════════════════════════════════════════
-// registerHeartbeatReminderHandler — activation-anchored regression harness
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// The scheduler state (currentIdentity / count / nextTurnAt) lives in a closure
-// created inside registerHeartbeatReminderHandler and is reachable only through
-// the pi.on("turn_end", ...) callback — there is no exported pure unit. So we
-// drive the REAL handler: a fake `pi` records handlers and captures sendMessage,
-// and a fake `runtime` scripts runPromise's final result shape per turn. This
-// exercises the true closure/bug site.
-//
-// Model under test (ADR-0001): every cadence is measured from the Activation
-// anchor, not session start. Each turn the handler reads the Active Soul
-// identity (soul + updatedAt); when it changes, the count resets to 0 (the
-// activation turn does NOT fire) and the schedule restarts. Nothing counts while
-// inactive, so a scheduled turn reached while inactive can no longer wedge the
-// session (issue #1 is structurally impossible, not merely patched).
-//
-// The handler also consults a MODULE-LEVEL singleton (`_heartbeatCoordinator`)
-// that is not exported and cannot be reset from outside. We therefore reset the
-// module registry and re-import the handler for each test to get a fresh
-// coordinator. This is the sanctioned "module loading boundary" exception to the
-// static-import rule (the source intentionally exposes no reset seam).
-
 type Handler = (event: unknown, ctx: unknown) => Promise<void> | void;
 
-/** The members of ExtensionAPI.sendMessage's payload we assert on. */
 interface SentMessage {
   customType?: string;
   content?: string;
   display?: boolean;
 }
 
-/** Signature of the export under test — re-imported fresh per test (see header). */
 type RegisterHeartbeat = (pi: ExtensionAPI, runtime: AppRuntime) => void;
 
 let registerHeartbeatReminderHandler: RegisterHeartbeat;
 
 beforeEach(async () => {
   vi.resetModules();
-  // Test-case exception to the static-import rule (ts-no-dynamic-import): we need
-  // a FRESH module instance per test to reset the module-level
-  // _heartbeatCoordinator singleton, for which the source intentionally exposes
-  // no reset seam. The specifier is a literal; the type comes from the static
-  // `import type` above.
   const mod = await import("../src/events");
   registerHeartbeatReminderHandler = mod.registerHeartbeatReminderHandler;
 });
 
-/** The Active Soul as persistence would report it on a given turn (null = none). */
 interface SoulState {
   soul: string;
   updatedAt: number;
@@ -60,17 +28,6 @@ interface SoulState {
   mode: HeartbeatMode;
 }
 
-/**
- * Build the final runPromise result shape for a per-turn soul state. It is a
- * SUPERSET consumed by both schedulers, so the same fixture drives the pre-rework
- * (session-absolute) closure through its REAL logic and the reworked
- * (activation-anchored) closure through its real logic — the RED run then shows
- * the old scheduler firing at the wrong TURNS, not a shape mismatch:
- *   - `active` + `mode` + `content` — read by the session-absolute closure.
- *   - `present` + `identity` + `mode` + `content` — read by the activation-anchored closure.
- * A soul is "fireable" (has content) only when Level-3 with a cadence set — the
- * Level-3 + content gate common to both.
- */
 function resultFor(s: SoulState | null) {
   if (s === null) {
     return { _tag: "success" as const, present: false as const, active: false as const };
@@ -187,9 +144,7 @@ async function driveSiblings(turns: number): Promise<{ firedAt: number[]; totalS
 
 describe("registerHeartbeatReminderHandler — activation-anchored scheduler", () => {
   it("fires lite exactly 6 turns AFTER a mid-session activation, not the activation turn", async () => {
-    // No soul for turns 1–6 (browse), then a Level-3 lite soul activates at turn
-    // 7. The activation turn (7) is count 0 and does NOT fire; the first lite
-    // beat lands 6 turns later at turn 13. (Session-absolute code fired at 12.)
+    // Rationale [3] → git notes docs-code-rationale: docs/rationale/events.test.md
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "lite" };
     const { firedAt, sent } = await drive(15, (t) => (t >= 7 ? soul : null));
     expect(firedAt).toEqual([13]);
@@ -201,9 +156,7 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
   });
 
   it("still fires when a soul activates well past the old turn-6 wedge point (issue #1 cannot recur)", async () => {
-    // Activate at turn 10 — long after turn 6. In the session-absolute model a
-    // turn 6 reached while inactive froze the schedule for the whole session;
-    // here nothing counts until activation, so it fires 6 turns after → turn 16.
+    // Rationale [4] → git notes docs-code-rationale: docs/rationale/events.test.md
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "lite" };
     const { firedAt } = await drive(20, (t) => (t >= 10 ? soul : null));
     expect(firedAt).toEqual([16]);
@@ -218,11 +171,7 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
   });
 
   it("fires full as a ramp-then-plateau anchored to activation (control)", async () => {
-    // full is a ramp-then-plateau (ADR-0001): the mala factors [6, 3, 2, 3] are
-    // cumulative POSITIONS (prefix products) 6, 18, 36, 108 — NOT repeating gaps
-    // — then a steady +108 pulse. Active from turn 1 (count 0 at turn 1, no
-    // fire) → counts 6, 18, 36, 108, 216 → turns 7, 19, 37, 109, 217. The former
-    // cyclic turns 10, 12, 15, 20… are gone.
+    // Rationale [5] → git notes docs-code-rationale: docs/rationale/events.test.md
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "full" };
     const { firedAt } = await drive(217, () => soul);
     expect(firedAt).toEqual([7, 19, 37, 109, 217]);
@@ -233,10 +182,7 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
   });
 
   it("re-anchors and restarts the schedule when the active-soul identity changes", async () => {
-    // Soul X (updatedAt 100) active from turn 1 → first beat at turn 7. At turn 8
-    // the identity changes (bumped updatedAt = 200, as a level/heartbeat change
-    // would do) → count resets to 0 at turn 8 (no fire) → next beat 6 turns later
-    // at turn 14.
+    // Rationale [6] → git notes docs-code-rationale: docs/rationale/events.test.md
     const x: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "lite" };
     const y: SoulState = { soul: "zen", updatedAt: 200, level: 3, mode: "lite" };
     const { firedAt } = await drive(15, (t) => (t >= 8 ? y : x));
@@ -244,10 +190,7 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
   });
 
   it("fires a custom integer mode N every N turns from activation", async () => {
-    // Custom N=4, active from turn 1: turn 1 is the activation anchor (count 0,
-    // no fire), then a beat every 4 → counts 4, 8, 12 → turns 5, 9, 13. A custom
-    // integer degenerates to a single-gap list [N] that clamps immediately and
-    // repeats forever, exactly like `lite`'s [6] with N substituted.
+    // Rationale [7] → git notes docs-code-rationale: docs/rationale/events.test.md
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: 4 };
     const { firedAt, sent } = await drive(15, () => soul);
     expect(firedAt).toEqual([5, 9, 13]);
@@ -264,9 +207,7 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
   });
 
   it("does not double-send across sibling closures sharing the coordinator", async () => {
-    // Two closures (jiti moduleCache:false) see the same active soul and reach
-    // the same activation-anchored beat at turn 7. The coordinator lets exactly
-    // one send through; keyed on identity+count, not a session-absolute turn.
+    // Rationale [8] → git notes docs-code-rationale: docs/rationale/events.test.md
     const { firedAt, totalSends } = await driveSiblings(8);
     expect(firedAt).toEqual([7]);
     expect(totalSends).toBe(1);
