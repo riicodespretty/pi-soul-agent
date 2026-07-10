@@ -243,6 +243,26 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
     expect(firedAt).toEqual([7, 14]);
   });
 
+  it("fires a custom integer mode N every N turns from activation", async () => {
+    // Custom N=4, active from turn 1: turn 1 is the activation anchor (count 0,
+    // no fire), then a beat every 4 → counts 4, 8, 12 → turns 5, 9, 13. A custom
+    // integer degenerates to a single-gap list [N] that clamps immediately and
+    // repeats forever, exactly like `lite`'s [6] with N substituted.
+    const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: 4 };
+    const { firedAt, sent } = await drive(15, () => soul);
+    expect(firedAt).toEqual([5, 9, 13]);
+    expect(sent[0].display).toBe(false);
+    expect(sent[0].customType).toBe("soul-heartbeat-reminder");
+  });
+
+  it("anchors a custom integer mode to a mid-session activation", async () => {
+    // Custom N=3 activates at turn 5. The activation turn (5) is count 0 and does
+    // NOT fire; the schedule restarts and beats land every 3 → turns 8, 11, 14.
+    const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: 3 };
+    const { firedAt } = await drive(15, (t) => (t >= 5 ? soul : null));
+    expect(firedAt).toEqual([8, 11, 14]);
+  });
+
   it("does not double-send across sibling closures sharing the coordinator", async () => {
     // Two closures (jiti moduleCache:false) see the same active soul and reach
     // the same activation-anchored beat at turn 7. The coordinator lets exactly

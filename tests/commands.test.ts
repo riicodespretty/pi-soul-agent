@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import { parseSoulCommandArgs } from "../src/commands";
 import { SoulSpecLoader } from "../src/loader";
@@ -101,6 +101,48 @@ describe("parseSoulCommandArgs", () => {
     if (result.action === "activate") {
       expect(result.soulName).toBe("my-soul");
       expect(result.level).toBe(1);
+    }
+  });
+
+  // ── Custom heartbeat interval (issue #5) ──────────────────────────────────
+
+  it("parses '--heartbeat 10' as a custom integer interval", () => {
+    const result = parseSoulCommandArgs("--heartbeat 10");
+    expect(result.action).toBe("heartbeat");
+    if (result.action === "heartbeat") {
+      expect(result.mode).toBe(10);
+      expect(result.warning).toBeUndefined();
+    }
+  });
+
+  it("parses '--heartbeat off|lite|full' as mode words (words win over integer parse)", () => {
+    for (const word of ["off", "lite", "full"] as const) {
+      const result = parseSoulCommandArgs(`--heartbeat ${word}`);
+      expect(result.action).toBe("heartbeat");
+      if (result.action === "heartbeat") {
+        expect(result.mode).toBe(word);
+        expect(result.warning).toBeUndefined();
+      }
+    }
+  });
+
+  it("rejects 0, negative, fractional, and non-numeric heartbeat values (not clamped, not off)", () => {
+    for (const bad of ["0", "-5", "2.5", "abc"]) {
+      const result = parseSoulCommandArgs(`--heartbeat ${bad}`);
+      expect(result.action).toBe("error");
+      if (result.action === "error") {
+        expect(result.message).toBe("heartbeat must be off|lite|full or a positive whole number");
+      }
+    }
+  });
+
+  it("accepts '--heartbeat 5000' but attaches a warning (> 1000)", () => {
+    const result = parseSoulCommandArgs("--heartbeat 5000");
+    expect(result.action).toBe("heartbeat");
+    if (result.action === "heartbeat") {
+      expect(result.mode).toBe(5000);
+      expect(result.warning).toBeDefined();
+      expect(result.warning).toContain("1000");
     }
   });
 });
@@ -220,5 +262,19 @@ describe("activateSoulPipeline", () => {
         }),
       ),
     ),
+  );
+});
+
+describe("heartbeatMode persistence round-trip", () => {
+  it.effect("round-trips a custom integer heartbeat mode through save/load", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.save(DEFAULT_SOURCE.name, 3, 10);
+      const loaded = yield* persistence.load();
+      expect(Option.isSome(loaded)).toBe(true);
+      if (Option.isSome(loaded)) {
+        expect(loaded.value.heartbeatMode).toBe(10);
+      }
+    }).pipe(Effect.provide(fullTestLayer)),
   );
 });

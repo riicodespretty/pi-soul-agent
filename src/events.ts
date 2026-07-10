@@ -1,7 +1,7 @@
 import { Cause, Effect, Option, pipe } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime, HeartbeatMode } from "./types";
+import type { AppRuntime } from "./types";
 import { SOUL_SEARCH_PATHS, SoulSpecLoader } from "./loader";
 import { ActiveSoulPersistence } from "./persistence";
 import { expandHome } from "./services/soul-fs";
@@ -40,9 +40,11 @@ const _heartbeatCoordinator = { servicedKey: null as string | null };
  *
  * The plateau is produced by CLAMPING the advance at the last gap (see below),
  * so the final entry (108) repeats forever. A single-entry list (`lite`) is the
- * degenerate case: it clamps immediately and repeats that one gap.
+ * degenerate case: it clamps immediately and repeats that one gap. A custom
+ * positive integer mode N is the same degenerate shape — the gap list is [N],
+ * so it fires every N turns from the Activation anchor.
  */
-const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
+const HEARTBEAT_INTERVALS: Record<"off" | "lite" | "full", readonly number[]> = {
   off: [],
   lite: [6],
   full: [6, 12, 18, 72, 108],
@@ -135,14 +137,18 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       currentIdentity = result.identity;
       count = 0;
       intervalIndex = 0;
-      const intervals = HEARTBEAT_INTERVALS[result.mode];
+      // A custom integer mode N is the degenerate gap list [N]; mode words look up
+      // their prefix-summed beats.
+      const intervals =
+        typeof result.mode === "number" ? [result.mode] : HEARTBEAT_INTERVALS[result.mode];
       nextTurnAt = intervals.length > 0 ? intervals[0] : 0;
       return;
     }
 
     // Same activation: advance the count and act only on a scheduled beat.
     count++;
-    const intervals = HEARTBEAT_INTERVALS[result.mode];
+    const intervals =
+      typeof result.mode === "number" ? [result.mode] : HEARTBEAT_INTERVALS[result.mode];
     if (intervals.length === 0 || count !== nextTurnAt) return;
 
     // Advance to the next beat, CLAMPING the index at the last gap so the final

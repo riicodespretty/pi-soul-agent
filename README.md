@@ -48,12 +48,13 @@ This project exists to learn:
 
 ### Commands
 
-| Command                    | Description                                       |
-| -------------------------- | ------------------------------------------------- |
-| `/soul <name> [--level N]` | Activate a soul with progressive disclosure level |
-| `/soul --clear`            | Deactivate current soul                           |
-| `/soul-list`               | List all available souls                          |
-| `/soul-info [--full]`      | Show active soul details                          |
+| Command                    | Description                                            |
+| -------------------------- | ------------------------------------------------------ |
+| `/soul <name> [--level N]` | Activate a soul with progressive disclosure level      |
+| `/soul --clear`            | Deactivate current soul                                |
+| `/soul --heartbeat <mode>` | Set heartbeat cadence: `off`, `lite`, `full`, or `<N>` |
+| `/soul-list`               | List all available souls                               |
+| `/soul-info [--full]`      | Show active soul details                               |
 
 ### Heartbeat System Reminders
 
@@ -68,6 +69,19 @@ When a soul defines a `HEARTBEAT.md` file and is loaded at **level 3**, the exte
 | 5      | 216                   | 108 | —        | — steady plateau, every 108 thereafter —           |
 
 The mala factors `[6, 3, 2, 3]` are cumulative **positions** (prefix products) — 6, 18, 36, 108 — not repeating gaps: 6 × 3 × 2 × 3 = **108** beads, the total landscape of mental disturbances ([kleshas](<https://en.wikipedia.org/wiki/Kleshas_(Buddhism)>)) to overcome. After the ramp reaches 108 the schedule **plateaus**, firing every 108 turns. The schedule counts only while a soul is active and **re-anchors** (restarts from 0) whenever the active soul changes — it is not a session-long counter. The reminder is hidden from the user — the agent sees it in its message history but the TUI stays clean.
+
+#### Heartbeat modes
+
+Set the cadence with `/soul --heartbeat <mode>` (persisted with the active soul, so it survives across sessions):
+
+| Mode   | Cadence                                                             |
+| ------ | ------------------------------------------------------------------- |
+| `off`  | Never fires — reminders disabled                                    |
+| `lite` | Every 6 turns from activation (default)                             |
+| `full` | The mala ramp-then-plateau above (6, 18, 36, 108, then every 108)   |
+| `<N>`  | Custom: every **N** turns from activation (a positive whole number) |
+
+A custom interval fires at N, 2N, 3N … turns after activation — e.g. `/soul --heartbeat 10` grounds every 10 turns. Mode words take precedence over the integer parse. Zero, negative, fractional, and non-numeric values are **rejected** (with the message `heartbeat must be off|lite|full or a positive whole number`), never clamped or treated as `off`. Values above 1000 are accepted but produce a warning, since reminders would then be very rare.
 
 ---
 

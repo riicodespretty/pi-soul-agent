@@ -290,7 +290,14 @@ export interface WritableSoulManifestProps {
 export interface SoulManifest extends WritableSoulManifestProps, SoulManifestData {}
 
 /** Schema for persisted active soul entry (runtime data, not from soul.json). */
-export const HeartbeatModeSchema = S.Literal("off", "lite", "full");
+// Heartbeat mode widens to off | lite | full | positive-integer N (ADR-0001):
+// a custom N fires every N turns from activation. Mode words decode first; a
+// positive whole number decodes via the Int+positive branch (rejects 0,
+// negative, fractional). Persisted with the Active Soul so a custom N round-trips.
+export const HeartbeatModeSchema = S.Union(
+  S.Literal("off", "lite", "full"),
+  S.Int.pipe(S.positive()),
+);
 export type HeartbeatMode = S.Schema.Type<typeof HeartbeatModeSchema>;
 
 export const ActiveSoulSchema = S.Struct({
@@ -306,7 +313,14 @@ export const ParsedSoulCommandSchema = S.Union(
   S.Struct({ action: S.Literal("help") }),
   S.Struct({ action: S.Literal("deactivate") }),
   S.Struct({ action: S.Literal("activate"), soulName: S.String, level: S.Number }),
-  S.Struct({ action: S.Literal("heartbeat"), mode: HeartbeatModeSchema }),
+  // A rejected input (bad heartbeat value, etc.) carries a user-facing message.
+  S.Struct({ action: S.Literal("error"), message: S.String }),
+  // `warning` is an accepted-but-notable notice (e.g. a heartbeat interval > 1000).
+  S.Struct({
+    action: S.Literal("heartbeat"),
+    mode: HeartbeatModeSchema,
+    warning: S.optionalWith(S.String, { exact: true }),
+  }),
 );
 export type ParsedSoulCommand = S.Schema.Type<typeof ParsedSoulCommandSchema>;
 

@@ -29,10 +29,33 @@ export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
     return { action: "deactivate" };
   }
 
-  // Heartbeat mode (--heartbeat off|lite|full)
-  const hbMatch = /^--heartbeat\s+(off|lite|full)$/i.exec(trimmed);
+  // Heartbeat mode (--heartbeat off|lite|full|<positive integer N>).
+  // Resolve mode WORDS first (they win over integer parsing), then attempt a
+  // positive-integer parse. Reject 0, negative, fractional, and non-numeric with
+  // a clear message (NOT clamped, unlike --level); warn but ACCEPT values > 1000.
+  const hbMatch = /^--heartbeat\s+(\S+)$/i.exec(trimmed);
   if (hbMatch) {
-    return { action: "heartbeat", mode: hbMatch[1].toLowerCase() as "off" | "lite" | "full" };
+    const arg = hbMatch[1].toLowerCase();
+    if (arg === "off" || arg === "lite" || arg === "full") {
+      return { action: "heartbeat", mode: arg };
+    }
+    // Only bare digits are a positive whole number: rejects "-5", "2.5", "abc".
+    if (/^\d+$/.test(arg)) {
+      const n = Number.parseInt(arg, 10);
+      if (n >= 1) {
+        return n > 1000
+          ? {
+              action: "heartbeat",
+              mode: n,
+              warning: `Heartbeat interval ${n} is very large (> 1000 turns); reminders will be rare.`,
+            }
+          : { action: "heartbeat", mode: n };
+      }
+    }
+    return {
+      action: "error",
+      message: "heartbeat must be off|lite|full or a positive whole number",
+    };
   }
 
   // Parse optional --level flag using Option (match can return null)
@@ -184,7 +207,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         const helpMsg = [
           "Usage: /soul <name> [--level N]",
           "       /soul --clear (or -c)",
-          "       /soul --heartbeat off|lite|full",
+          "       /soul --heartbeat off|lite|full|<N>",
           "",
           "Load and activate a SoulSpec persona.",
           "  --level N    Progressive disclosure level (1-3, default 2)",
@@ -193,6 +216,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           "  --heartbeat off    Disable heartbeat reminders",
           "  --heartbeat lite   Every 6 turns (default)",
           "  --heartbeat full   Full mala cycle 6→3→2→3",
+          "  --heartbeat <N>    Custom: every N turns from activation (positive whole number)",
           "",
           "Tab-completion shows available souls with descriptions.",
           "",
@@ -202,8 +226,14 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           "  /soul --clear, -c          (deactivate current soul)",
           "  /soul --heartbeat lite     (reduce heartbeat frequency)",
           "  /soul --heartbeat full     (full mala cycle)",
+          "  /soul --heartbeat 10       (custom: every 10 turns)",
         ].join("\n");
         notifyUI(ctx, helpMsg, "info");
+        return;
+      }
+
+      if (parsed.action === "error") {
+        notifyUI(ctx, parsed.message, "error");
         return;
       }
 
@@ -226,6 +256,10 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
         if (result._tag === "error") {
           notifyUI(ctx, result.message, "error");
           return;
+        }
+
+        if (parsed.warning) {
+          notifyUI(ctx, parsed.warning, "warning");
         }
 
         notifyUI(
