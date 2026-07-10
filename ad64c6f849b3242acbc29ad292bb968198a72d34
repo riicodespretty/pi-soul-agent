@@ -1,0 +1,21 @@
+# docs-code-rationale — Code-level design rationale
+#
+# File index:
+#   docs/rationale/errors.md — error model: why SoulLoadError is the sole public error
+#
+# Per-file "why" extracted from inline comments — design rationale that survives being
+# read away from the code. Line-local implementation comments stay in the source. Each
+# source file keeps a one-line pointer back to its section here. Anchored to root commit
+# in ref refs/notes/docs-code-rationale.
+
+===== FILE: docs/rationale/errors.md =====
+# Error model (src/errors.ts)
+
+Four internal tagged errors — SoulNotFoundError, NoSoulsFoundError, ManifestParseError,
+FileSystemError — are used by soul-fs.ts and the internal loader methods. They are never
+consumed directly by external callers.
+
+SoulLoadError is the ONLY error type that escapes the public loader API. All internal
+errors are caught, logged, and re-mapped into it, so a consumer handles a single tagged
+type via Effect.catchTag("SoulLoadError", ...). Keeping the loader's failure surface to
+one type at the seam is the deliberate design choice this file encodes.
