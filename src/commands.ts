@@ -70,6 +70,13 @@ export function heartbeatLevelNotice(mode: HeartbeatMode, level: number): string
   return "Heartbeat needs level 3 to send reminders; will activate when this soul is loaded at level 3.";
 }
 
+function soulLineParts(soul: SoulManifest): { namePart: string; summary: string } {
+  const summary = soul.disclosure?.summary ?? soul.description ?? "";
+  const namePart =
+    soul.displayName === soul.name ? soul.name : `${soul.name} — ${soul.displayName}`;
+  return { namePart, summary };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Command: /soul-list
 // ═══════════════════════════════════════════════════════════════════════════
@@ -108,8 +115,7 @@ export function registerSoulListCommand(pi: ExtensionAPI, runtime: AppRuntime): 
       }
 
       const lines = result.souls.map((s) => {
-        const summary = s.disclosure?.summary ?? s.description ?? "";
-        const namePart = s.displayName === s.name ? s.name : `${s.name} — ${s.displayName}`;
+        const { namePart, summary } = soulLineParts(s);
         return summary ? `${namePart}\n  ${summary}` : namePart;
       });
 
@@ -121,6 +127,18 @@ export function registerSoulListCommand(pi: ExtensionAPI, runtime: AppRuntime): 
 // ═══════════════════════════════════════════════════════════════════════════
 // Command: /soul
 // ═══════════════════════════════════════════════════════════════════════════
+
+export function activateSoulPipeline(soulName: string, level: number) {
+  return Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const persistence = yield* ActiveSoulPersistence;
+
+    const manifest = yield* loader.getSoul(soulName, level);
+    const systemPrompt = buildSystemPrompt(manifest, level);
+    yield* persistence.save(manifest.name, level);
+    return { manifest, systemPrompt } as const;
+  });
+}
 
 /**
  * Register the `/soul` command.
@@ -332,8 +350,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
 
         let msg = "Usage: /soul <soul-name>\n\nAvailable souls:\n";
         for (const s of result.souls) {
-          const summary = s.disclosure?.summary ?? s.description ?? "";
-          const namePart = s.displayName === s.name ? s.name : `${s.name} — ${s.displayName}`;
+          const { namePart, summary } = soulLineParts(s);
           msg += `\n  \u2022 **${namePart}**`;
           if (summary) msg += `\n    ${summary}`;
         }
@@ -343,22 +360,8 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       }
 
       // Activate
-      const activateSoulPipeline = Effect.gen(function* () {
-        const loader = yield* SoulSpecLoader;
-        const persistence = yield* ActiveSoulPersistence;
-
-        // Preserve existing heartbeat mode when switching souls
-        const existing = yield* persistence.load();
-        const heartbeatMode = Option.isSome(existing) ? existing.value.heartbeatMode : undefined;
-
-        const manifest = yield* loader.getSoul(parsed.soulName, parsed.level);
-        const systemPrompt = buildSystemPrompt(manifest, parsed.level);
-        yield* persistence.save(manifest.name, parsed.level, heartbeatMode);
-        return { manifest, systemPrompt } as const;
-      });
-
       const result = await runtime.runPromise(
-        Effect.matchCause(activateSoulPipeline, {
+        Effect.matchCause(activateSoulPipeline(parsed.soulName, parsed.level), {
           onSuccess: ({ manifest, systemPrompt }) => ({
             _tag: "success" as const,
             manifest,
@@ -459,11 +462,7 @@ export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): 
       }
 
       const { manifest, soulPath, level, systemPrompt } = result;
-      const summary = manifest.disclosure?.summary ?? manifest.description ?? "";
-      const namePart =
-        manifest.displayName !== manifest.name
-          ? `${manifest.name} — ${manifest.displayName}`
-          : manifest.name;
+      const { namePart, summary } = soulLineParts(manifest);
 
       let msg = `Active soul: ${namePart}`;
       if (summary) msg += `\n  ${summary}`;

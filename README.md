@@ -56,6 +56,8 @@ This project exists to learn:
 | `/soul-list`               | List all available souls                               |
 | `/soul-info [--full]`      | Show active soul details                               |
 
+Tab-completion for `/soul` offers available soul names (each with its description) and, once you start typing a flag, the flags `--clear` (`-c`), `--help` (`-h`), and `--heartbeat` — including the heartbeat modes `lite`, `full`, and `off`.
+
 ### Heartbeat System Reminders
 
 When a soul defines a `HEARTBEAT.md` file and is loaded at **level 3**, the extension sends a periodic system reminder to the agent using the heartbeat content. It fires on `turn_end`, measured from the **activation anchor** — the turn on which the soul becomes active (that turn is the zero point and does not itself fire). The `full` mode follows a Buddhist [mala](https://en.wikipedia.org/wiki/Japamala) as a **ramp-then-plateau**: frequent early grounding that tapers to a steady pulse.

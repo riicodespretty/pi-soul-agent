@@ -1,8 +1,8 @@
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { FileSystem } from "@effect/platform";
 import { SystemError } from "@effect/platform/Error";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
-import { SoulSpecLoader, SOUL_SEARCH_PATHS } from "../src/loader";
+import { SOUL_SEARCH_PATHS } from "../src/loader";
 import { expandHome, parseManifest } from "../src/services/soul-fs";
 import type { DeepPartial, SoulFiles, SoulManifest, SoulManifestData } from "../src/types";
 
@@ -141,11 +141,3 @@ export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFES
       }),
   });
 }
-
-// ── Legacy helpers ────────────────────────────────────────────────────────────
-
-/**
- * Create a fresh SoulSpecLoader layer (new cache per call).
- * @deprecated Use `Layer.fresh(SoulSpecLoader.Default)` directly.
- */
-export const freshLoaderLayer = () => Layer.fresh(SoulSpecLoader.Default);

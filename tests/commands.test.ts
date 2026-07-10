@@ -1,7 +1,7 @@
 import { describe, it, expect } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
-import { parseSoulCommandArgs, heartbeatLevelNotice } from "../src/commands";
+import { parseSoulCommandArgs, heartbeatLevelNotice, activateSoulPipeline } from "../src/commands";
 import { SoulSpecLoader } from "../src/loader";
 import { ActiveSoulPersistence } from "../src/persistence";
 import { createMockFsLayer, DEFAULT_SOURCE } from "./helpers";
@@ -354,5 +354,38 @@ describe("setHeartbeatPipeline (persist-and-warn on sub-Level-3 soul)", () => {
         expect(notice).toBeUndefined();
       }
     }).pipe(Effect.provide(fullTestLayer)),
+  );
+});
+
+describe("activateSoulPipeline (no cross-soul heartbeatMode inheritance)", () => {
+  const twoSoulLayer = Layer.fresh(SoulSpecLoader.Default).pipe(
+    Layer.provideMerge(Layer.fresh(ActiveSoulPersistence.Default)),
+    Layer.provideMerge(createMockFsLayer([{ name: "soul-a" }, { name: "soul-b" }])),
+    Layer.provideMerge(NodePathLayer),
+  );
+
+  it.effect("a fresh activation defaults to lite, never inheriting the prior soul's cadence", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+
+      yield* activateSoulPipeline("soul-a", 2);
+      yield* persistence.updateHeartbeatMode("full");
+
+      const afterA = yield* persistence.load();
+      expect(Option.isSome(afterA)).toBe(true);
+      if (Option.isSome(afterA)) {
+        expect(afterA.value.soul).toBe("soul-a");
+        expect(afterA.value.heartbeatMode).toBe("full");
+      }
+
+      yield* activateSoulPipeline("soul-b", 2);
+
+      const afterB = yield* persistence.load();
+      expect(Option.isSome(afterB)).toBe(true);
+      if (Option.isSome(afterB)) {
+        expect(afterB.value.soul).toBe("soul-b");
+        expect(afterB.value.heartbeatMode).toBe("lite");
+      }
+    }).pipe(Effect.provide(twoSoulLayer)),
   );
 });

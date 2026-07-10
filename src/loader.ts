@@ -25,6 +25,21 @@ function soulLoadError(message: string, cause?: unknown): SoulLoadError {
   });
 }
 
+const remapToSoulLoadError = <
+  A,
+  E extends { readonly message: string; readonly cause?: unknown },
+  R,
+>(
+  self: Effect.Effect<A, E, R>,
+): Effect.Effect<A, SoulLoadError, R> =>
+  self.pipe(
+    Effect.catchAll((e) => {
+      // Passthrough already-wrapped SoulLoadError (from loadSoul)
+      if (e instanceof SoulLoadError) return Effect.fail(e);
+      return Effect.fail(soulLoadError(e.message, e.cause));
+    }),
+  );
+
 export function filterByLevel(manifest: SoulManifest, level: number): SoulManifest {
   const result = { ...manifest };
 
@@ -172,13 +187,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
         }
 
         return results;
-      }).pipe(
-        Effect.catchAll((e) => {
-          // Passthrough already-wrapped SoulLoadError (from loadSoul)
-          if (e instanceof SoulLoadError) return Effect.fail(e);
-          return Effect.fail(soulLoadError(e.message, e.cause));
-        }),
-      );
+      }).pipe(remapToSoulLoadError);
     };
 
     /**
@@ -191,13 +200,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
       return Effect.gen(function* () {
         const soulPath = yield* resolveSoulPath(soulName);
         return yield* loadSoul(soulName, soulPath, level);
-      }).pipe(
-        Effect.catchAll((e) => {
-          // Passthrough already-wrapped SoulLoadError (from loadSoul)
-          if (e instanceof SoulLoadError) return Effect.fail(e);
-          return Effect.fail(soulLoadError(e.message, e.cause));
-        }),
-      );
+      }).pipe(remapToSoulLoadError);
     };
 
     /**

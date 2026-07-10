@@ -75,24 +75,23 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       return;
     }
 
+    // A custom integer mode N is the degenerate gap list [N]; mode words look up
+    // their prefix-summed beats.
+    const intervals =
+      typeof result.mode === "number" ? [result.mode] : HEARTBEAT_INTERVALS[result.mode];
+
     // New activation identity → re-anchor: the activation turn is count 0 (no
     // fire) and the schedule restarts at the first beat.
     if (result.identity !== currentIdentity) {
       currentIdentity = result.identity;
       count = 0;
       intervalIndex = 0;
-      // A custom integer mode N is the degenerate gap list [N]; mode words look up
-      // their prefix-summed beats.
-      const intervals =
-        typeof result.mode === "number" ? [result.mode] : HEARTBEAT_INTERVALS[result.mode];
       nextTurnAt = intervals.length > 0 ? intervals[0] : 0;
       return;
     }
 
     // Same activation: advance the count and act only on a scheduled beat.
     count++;
-    const intervals =
-      typeof result.mode === "number" ? [result.mode] : HEARTBEAT_INTERVALS[result.mode];
     if (intervals.length === 0 || count !== nextTurnAt) return;
 
     // Rationale [3] → git notes docs-code-rationale: docs/rationale/events.md
