@@ -18,4 +18,4 @@
 | History · testing | refs/notes/docs-history-testing | TP-008 — test frailty & isolation |
 | Reviews | refs/notes/docs-reviews | Standalone code-quality / runtime-safety / spec-compliance reviews |
 | ADR | refs/notes/docs-adr | Architecture Decision Records (0001: heartbeat anchors to activation) |
-| Code rationale | refs/notes/docs-code-rationale | Per-file code-level design rationale (errors.md) |
+| Code rationale | refs/notes/docs-code-rationale | Per-file code-level design rationale (errors, events, commands, types, events.test) |
