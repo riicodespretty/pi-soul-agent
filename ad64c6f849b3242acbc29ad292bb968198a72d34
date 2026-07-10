@@ -1,7 +1,7 @@
 # pi-soul-agent — docs index (git-notes)
 #
-# Design docs for this repo live in git NOTES, not the working tree — one ref
-# per area of concern, all anchored to the ROOT commit. This note is the manifest.
+# Design docs live in git NOTES, not the working tree — one ref per area of
+# concern, all anchored to the ROOT commit (ad64c6f849b3242acbc29ad292bb968198a72d34). This note is the manifest.
 # Skill: docs-in-git-notes.
 #
 # Read an area:   ROOT=$(git rev-list --max-parents=0 HEAD | tail -1)
@@ -9,7 +9,11 @@
 # Refspec (once): git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
 #                 git fetch origin '+refs/notes/*:refs/notes/*'
 
-| Area         | Ref                          | Contents                                                                                  |
-| ------------ | ---------------------------- | ----------------------------------------------------------------------------------------- |
-| Domain       | refs/notes/docs-domain       | CONTEXT.md — ubiquitous language / glossary                                               |
-| Architecture | refs/notes/docs-architecture | Module map, the Effect event-handler bridge, runtime/layer wiring, event & command inventory, error model, open findings |
+| Area | Ref | Contents |
+| --- | --- | --- |
+| Domain | refs/notes/docs-domain | CONTEXT.md — ubiquitous language / glossary |
+| Architecture | refs/notes/docs-architecture | Module map, handler bridge, wiring, event/command inventory, error model, findings |
+| History · port | refs/notes/docs-history-port | TP-001‑004 — Effect-TS port, SoulSpec compliance, try/catch escape |
+| History · loader | refs/notes/docs-history-loader | TP-005/006/007/009/010 + root scratch — loader.ts API & error handling |
+| History · testing | refs/notes/docs-history-testing | TP-008 — test frailty & isolation |
+| Reviews | refs/notes/docs-reviews | Standalone code-quality / runtime-safety / spec-compliance reviews |
