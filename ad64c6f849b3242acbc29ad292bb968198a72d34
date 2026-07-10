@@ -1,0 +1,81 @@
+# docs-domain — Domain area (glossary)
+#
+# File index:
+#   CONTEXT.md — ubiquitous language / glossary for pi-soul-agent
+#
+# Anchored to root commit in ref refs/notes/docs-domain. Edit via dump->edit->add -f->push.
+
+===== FILE: CONTEXT.md =====
+# pi-soul-agent — Context
+
+A Pi coding-agent extension that activates SoulSpec personas and injects them into the
+agent's system prompt. An Effect-TS learning port of `@vtstech/pi-soul`.
+
+## Language
+
+**Soul**:
+An AI-agent persona defined in SoulSpec format — a directory of `soul.json` plus companion
+Markdown files.
+_Avoid_: persona, character, profile
+
+**SoulSpec**:
+The on-disk format (v0.5) a Soul conforms to: the `soul.json` manifest schema plus its
+companion Markdown files.
+_Avoid_: spec, format
+
+**Manifest**:
+The parsed, schema-validated contents of `soul.json` together with runtime-loaded Content
+fields (the `SoulManifest` type). `src/types.ts` is the source of truth.
+_Avoid_: config, spec
+
+**Manifest data**:
+The subset of a Manifest that comes from `soul.json` on disk (the schema fields). Contrast
+with Content field.
+
+**Content field**:
+A Manifest property whose value is read at runtime from a companion `.md` file
+(`soulContent`, `identityContent`, `heartbeatContent`, …) — never present in `soul.json`.
+_Avoid_: body, markdown content
+
+**Level** (progressive disclosure, 1–3):
+How much of a Soul is loaded. 1 = metadata only; 2 = core persona (soul + identity);
+3 = full behavior (agents, style, heartbeat, user template, examples).
+_Avoid_: tier, depth, stage
+
+**Active Soul**:
+The currently-activated Soul, persisted to `~/.pi/agent/.active-soul.json` as
+`{ soul, level, updatedAt, heartbeatMode }`.
+_Avoid_: current soul, selected soul
+
+**Search paths**:
+The four ordered directories scanned for Souls; first match wins —
+`~/.pi/agent/souls`, `~/.openclaw/souls/clawsouls`, `.pi/souls`, `./souls`.
+
+**Loader** (SoulSpecLoader):
+The Effect service that discovers, parses, filters, and caches Souls.
+
+**Upgrade-only cache**:
+The Loader's per-Soul cache that raises a Soul's cached Level but never lowers it.
+
+**Heartbeat**:
+A hidden, periodic system reminder built from a Soul's `HEARTBEAT.md`, re-injected on
+`turn_end`. Level-3 only.
+_Avoid_: ping, tick
+
+**Heartbeat mode**:
+`off` | `lite` (fire every 6 turns) | `full` (fire on the mala cadence). Stored on the
+Active Soul; defaults to `lite`.
+_Avoid_: frequency, cadence
+
+**Mala** / **beads**:
+The Buddhist-rosary cadence `[6, 3, 2, 3]` (6 × 3 × 2 × 3 = 108 kleshas) that spaces
+`full`-mode Heartbeats.
+
+**Environment**:
+A Soul's deployment context: `virtual` | `embodied` | `hybrid`. Non-virtual values unlock
+the embodied vocabulary in the built system prompt.
+
+**Embodied vocabulary** (Interaction mode, Sensors, Actuators, Hardware constraints,
+Contact policy):
+Soul fields describing a physical agent. Emitted into the system prompt only when
+Environment is non-virtual.
