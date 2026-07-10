@@ -55,11 +55,6 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
     totalTurns++;
     if (totalTurns !== nextTurnAt) return;
 
-    // Module-level dedup: if another closure already sent a heartbeat
-    // at this turn, skip. The coordinator is shared across ALL closures.
-    if (_heartbeatCoordinator.servicedAtTurn >= totalTurns) return;
-    _heartbeatCoordinator.servicedAtTurn = totalTurns;
-
     const heartbeatPipeline = Effect.gen(function* () {
       const persistence = yield* ActiveSoulPersistence;
       const activeSoul = yield* persistence.load();
@@ -102,20 +97,33 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       return;
     }
 
-    if (!result.active) return;
-
-    // Advance the mala based on heartbeat mode
-    // lite: single 6-interval (every 6 turns)
-    // full: full mala cycle [6, 3, 2, 3]
+    // Advance the mala schedule whenever a scheduled turn is reached, REGARDLESS
+    // of whether a heartbeat actually fires. Decoupling "advance" from "send" is
+    // the fix for the session-long wedge (issue #1): a scheduled turn reached
+    // while inactive (no active soul yet, mode "off", level < 3, or no content)
+    // used to freeze nextTurnAt, so the strict gate above never matched again.
+    // lite: single 6-interval (every 6 turns); full: full mala cycle [6, 3, 2, 3].
+    // While inactive we have no mode, so tick on the lite cadence (matches the
+    // initial nextTurnAt = 6 and the default heartbeat mode).
     const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
       off: [],
       lite: [6],
       full: [6, 3, 2, 3],
     };
-    const intervals = HEARTBEAT_INTERVALS[result.mode];
-    if (intervals.length === 0) return; // off mode — no heartbeat
+    const mode = result.active ? result.mode : "lite";
+    const intervals = HEARTBEAT_INTERVALS[mode];
     intervalIndex = (intervalIndex + 1) % intervals.length;
     nextTurnAt += intervals[intervalIndex];
+
+    // Only an active, level-3 soul with heartbeat content actually sends.
+    if (!result.active) return;
+
+    // Module-level dedup: if another closure already sent a heartbeat at this
+    // turn, skip the send — but the schedule above has already advanced, so this
+    // closure stays on cadence. Record service only AFTER an actual send, so an
+    // inactive turn never falsely claims a turn away from a sibling closure.
+    if (_heartbeatCoordinator.servicedAtTurn >= totalTurns) return;
+    _heartbeatCoordinator.servicedAtTurn = totalTurns;
 
     // No deliverAs option: when the agent is idle (not streaming), this
     // appends immediately to agent.state.messages and persists to the session,
