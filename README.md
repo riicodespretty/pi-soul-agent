@@ -57,17 +57,17 @@ This project exists to learn:
 
 ### Heartbeat System Reminders
 
-When a soul defines a `HEARTBEAT.md` file and is loaded at **level 3**, the extension sends a periodic system reminder to the agent using the heartbeat content. It fires on `turn_end` at cumulative turn thresholds that follow a Buddhist [mala](https://en.wikipedia.org/wiki/Japamala):
+When a soul defines a `HEARTBEAT.md` file and is loaded at **level 3**, the extension sends a periodic system reminder to the agent using the heartbeat content. It fires on `turn_end`, measured from the **activation anchor** — the turn on which the soul becomes active (that turn is the zero point and does not itself fire). The `full` mode follows a Buddhist [mala](https://en.wikipedia.org/wiki/Japamala) as a **ramp-then-plateau**: frequent early grounding that tapers to a steady pulse.
 
-| Turn | Interval | Bead     | Meaning                                            |
-| ---- | -------- | -------- | -------------------------------------------------- |
-| 6    | 6        | Senses   | Touch, taste, smell, sight, hearing, consciousness |
-| 9    | 3        | Feelings | Pleasant, unpleasant, neutral                      |
-| 11   | 2        | States   | Attached, or detached                              |
-| 14   | 3        | Times    | Past, present, future                              |
-| 20   | 6        | Senses   | — cycle repeats —                                  |
+| Fire # | Turn after activation | Gap | Bead     | Meaning                                            |
+| ------ | --------------------- | --- | -------- | -------------------------------------------------- |
+| 1      | 6                     | 6   | Senses   | Touch, taste, smell, sight, hearing, consciousness |
+| 2      | 18                    | 12  | Feelings | Pleasant, unpleasant, neutral                      |
+| 3      | 36                    | 18  | States   | Attached, or detached                              |
+| 4      | 108                   | 72  | Times    | Past, present, future                              |
+| 5      | 216                   | 108 | —        | — steady plateau, every 108 thereafter —           |
 
-The four intervals multiplied — 6 × 3 × 2 × 3 = **108** beads, represents the total landscape of mental disturbances ([kleshas](<https://en.wikipedia.org/wiki/Kleshas_(Buddhism)>)) that must be overcome to reach enlightenment. The counter runs across the full session, resetting only on `session_start`. The reminder is hidden from the user — the agent sees it in its message history but the TUI stays clean.
+The mala factors `[6, 3, 2, 3]` are cumulative **positions** (prefix products) — 6, 18, 36, 108 — not repeating gaps: 6 × 3 × 2 × 3 = **108** beads, the total landscape of mental disturbances ([kleshas](<https://en.wikipedia.org/wiki/Kleshas_(Buddhism)>)) to overcome. After the ramp reaches 108 the schedule **plateaus**, firing every 108 turns. The schedule counts only while a soul is active and **re-anchors** (restarts from 0) whenever the active soul changes — it is not a session-long counter. The reminder is hidden from the user — the agent sees it in its message history but the TUI stays clean.
 
 ---
 
@@ -180,12 +180,12 @@ Each Pi event handler runs an `Effect.gen` pipeline, bridges it to Pi's callback
 
 ### Event Handlers
 
-| Event                                         | Handler                                                       |
-| --------------------------------------------- | ------------------------------------------------------------- |
-| `session_start`                               | Preloads persisted active soul                                |
-| `resources_discover`                          | Exposes soul directories as prompt paths                      |
-| `before_agent_start`                          | Injects active soul into system prompt                        |
-| `turn_end` (counter reset on `session_start`) | Heartbeat mala reminder at interval thresholds (level 3 only) |
+| Event                                    | Handler                                                       |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| `session_start`                          | Preloads persisted active soul                                |
+| `resources_discover`                     | Exposes soul directories as prompt paths                      |
+| `before_agent_start`                     | Injects active soul into system prompt                        |
+| `turn_end` (anchored to soul activation) | Heartbeat mala reminder at interval thresholds (level 3 only) |
 
 ---
 

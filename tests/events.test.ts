@@ -217,12 +217,19 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
     expect(firedAt).toEqual([7, 13]);
   });
 
-  it("preserves the full mala cadence anchored to activation (control)", async () => {
-    // full shape unchanged [6, 3, 2, 3]; anchored to activation at turn 1
-    // (count 0) → counts 6, 9, 11, 14 → turns 7, 10, 12, 15.
+  it("fires full as a ramp-then-plateau anchored to activation (control)", async () => {
+    // full is a ramp-then-plateau (ADR-0001): the mala factors [6, 3, 2, 3] are
+    // cumulative POSITIONS (prefix products) 6, 18, 36, 108 — NOT repeating gaps
+    // — then a steady +108 pulse. Active from turn 1 (count 0 at turn 1, no
+    // fire) → counts 6, 18, 36, 108, 216 → turns 7, 19, 37, 109, 217. The former
+    // cyclic turns 10, 12, 15, 20… are gone.
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "full" };
-    const { firedAt } = await drive(15, () => soul);
-    expect(firedAt).toEqual([7, 10, 12, 15]);
+    const { firedAt } = await drive(217, () => soul);
+    expect(firedAt).toEqual([7, 19, 37, 109, 217]);
+    // Ramp gaps taper (12, 18, 72) then the schedule PLATEAUS: the 5th fire lands
+    // a constant 108 turns after the 4th, and holds there thereafter.
+    expect(firedAt[3] - firedAt[2]).toBe(72);
+    expect(firedAt[4] - firedAt[3]).toBe(108);
   });
 
   it("re-anchors and restarts the schedule when the active-soul identity changes", async () => {

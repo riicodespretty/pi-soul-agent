@@ -28,17 +28,24 @@ interface ResourcesDiscoverResult {
 const _heartbeatCoordinator = { servicedKey: null as string | null };
 
 /**
- * The cadence SHAPES, unchanged from the original design; only the anchor point
- * moved (ADR-0001). Prefix-summing an interval list from the Activation anchor
- * gives the beats: `lite` fires every 6 turns; `full` cycles the mala
- * [6, 3, 2, 3] (6 senses → 3 feelings → 2 states → 3 times, 108 in full);
- * `off` never fires. Positions are counted from activation (count 0), not from
- * session start.
+ * The cadence gap lists, prefix-summed from the Activation anchor to get the
+ * beats (count 0 = activation, no fire). Only the anchor point and `full`'s
+ * shape changed (ADR-0001); `off`/`lite` are as before.
+ *
+ * `off` never fires. `lite` fires every 6 turns. `full` is a ramp-then-plateau:
+ * the mala factors [6, 3, 2, 3] are cumulative POSITIONS (prefix products)
+ * 6, 18, 36, 108 — NOT repeating gaps — so the gap list is [6, 12, 18, 72, 108];
+ * after the ramp the schedule holds at a steady +108 pulse (108 = 6 × 3 × 2 × 3,
+ * the full klesha count). Frequent early grounding tapering to a calm plateau.
+ *
+ * The plateau is produced by CLAMPING the advance at the last gap (see below),
+ * so the final entry (108) repeats forever. A single-entry list (`lite`) is the
+ * degenerate case: it clamps immediately and repeats that one gap.
  */
 const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
   off: [],
   lite: [6],
-  full: [6, 3, 2, 3],
+  full: [6, 12, 18, 72, 108],
 };
 
 /**
@@ -138,9 +145,11 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
     const intervals = HEARTBEAT_INTERVALS[result.mode];
     if (intervals.length === 0 || count !== nextTurnAt) return;
 
-    // Advance to the next beat (the mala cycles; lite repeats every 6). This
-    // runs whether or not we actually send, keeping the cadence ticking.
-    intervalIndex = (intervalIndex + 1) % intervals.length;
+    // Advance to the next beat, CLAMPING the index at the last gap so the final
+    // entry repeats forever: `full` ramps (6, 12, 18, 72) then holds at +108;
+    // `lite` (one entry) repeats its single gap. Runs whether or not we actually
+    // send, keeping the cadence ticking.
+    intervalIndex = Math.min(intervalIndex + 1, intervals.length - 1);
     nextTurnAt += intervals[intervalIndex];
 
     // Only an active, Level-3 Soul with heartbeat content actually sends.
