@@ -1,6 +1,6 @@
 import { Cause, Effect, Option, pipe } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { AppRuntime, ParsedSoulCommand, SoulManifest } from "./types";
+import type { AppRuntime, HeartbeatMode, ParsedSoulCommand, SoulManifest } from "./types";
 import { SoulSpecLoader } from "./loader";
 import { ActiveSoulPersistence } from "./persistence";
 import { buildSystemPrompt } from "./system-prompt";
@@ -69,6 +69,22 @@ export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
   const soulName = trimmed.replace(/--level\s*[= ]\s*\d+/i, "").trim();
 
   return { action: "activate", soulName, level };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Heartbeat Level-3 gate notice
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Decide whether setting `mode` on a soul currently at `level` warrants a
+ * "needs Level 3" notice. Heartbeat content only loads at Level 3, so a cadence
+ * (`lite` | `full` | custom `N`) set below Level 3 persists but cannot fire until
+ * the soul is loaded at Level 3. `off` never warns (nothing was going to fire).
+ * Returns the notice string, or `undefined` when no notice is warranted.
+ */
+export function heartbeatLevelNotice(mode: HeartbeatMode, level: number): string | undefined {
+  if (mode === "off" || level >= 3) return undefined;
+  return "Heartbeat needs level 3 to send reminders; will activate when this soul is loaded at level 3.";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -240,12 +256,17 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       if (parsed.action === "heartbeat") {
         const updateHeartbeatPipeline = Effect.gen(function* () {
           const persistence = yield* ActiveSoulPersistence;
-          return yield* persistence.updateHeartbeatMode(parsed.mode);
+          yield* persistence.updateHeartbeatMode(parsed.mode);
+          // Re-read the active soul to determine its effective level: heartbeat
+          // content only loads at Level 3, so a cadence set below Level 3 persists
+          // but cannot fire until the soul is loaded at Level 3.
+          const active = yield* persistence.load();
+          return Option.isSome(active) ? active.value.level : undefined;
         });
 
         const result = await runtime.runPromise(
           Effect.matchCause(updateHeartbeatPipeline, {
-            onSuccess: () => ({ _tag: "success" as const }),
+            onSuccess: (level) => ({ _tag: "success" as const, level }),
             onFailure: (cause) => ({
               _tag: "error" as const,
               message: `Error updating heartbeat mode: ${Cause.pretty(cause)}`,
@@ -260,6 +281,14 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
 
         if (parsed.warning) {
           notifyUI(ctx, parsed.warning, "warning");
+        }
+
+        // Persist-and-warn: the setting is saved above; if the target soul is
+        // below the Level-3 content gate, tell the user it won't fire until then.
+        const levelNotice =
+          result.level === undefined ? undefined : heartbeatLevelNotice(parsed.mode, result.level);
+        if (levelNotice) {
+          notifyUI(ctx, levelNotice, "warning");
         }
 
         notifyUI(

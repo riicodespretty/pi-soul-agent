@@ -1,7 +1,7 @@
 import { describe, it, expect } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
-import { parseSoulCommandArgs } from "../src/commands";
+import { parseSoulCommandArgs, heartbeatLevelNotice } from "../src/commands";
 import { SoulSpecLoader } from "../src/loader";
 import { ActiveSoulPersistence } from "../src/persistence";
 import { createMockFsLayer, DEFAULT_SOURCE } from "./helpers";
@@ -274,6 +274,88 @@ describe("heartbeatMode persistence round-trip", () => {
       expect(Option.isSome(loaded)).toBe(true);
       if (Option.isSome(loaded)) {
         expect(loaded.value.heartbeatMode).toBe(10);
+      }
+    }).pipe(Effect.provide(fullTestLayer)),
+  );
+});
+
+describe("setHeartbeatPipeline (persist-and-warn on sub-Level-3 soul)", () => {
+  // Mirrors the /soul --heartbeat handler pipeline: persist the mode, then read
+  // the active soul's level to decide whether a "needs Level 3" notice fires.
+  const setHeartbeatEffect = (mode: Parameters<typeof heartbeatLevelNotice>[0]) =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.updateHeartbeatMode(mode);
+      const loaded = yield* persistence.load();
+      return loaded;
+    });
+
+  it.effect("persists a lite cadence on a Level-2 soul AND surfaces a Level-3 notice", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      // Active soul is below the Level-3 content gate.
+      yield* persistence.save(DEFAULT_SOURCE.name, 2, "off");
+
+      const loaded = yield* setHeartbeatEffect("lite");
+
+      // (a) the setting is PERSISTED, not swallowed.
+      expect(Option.isSome(loaded)).toBe(true);
+      if (Option.isSome(loaded)) {
+        expect(loaded.value.heartbeatMode).toBe("lite");
+        expect(loaded.value.level).toBe(2);
+        // (b) a notice mentioning Level 3 is surfaced.
+        const notice = heartbeatLevelNotice(loaded.value.heartbeatMode, loaded.value.level);
+        expect(notice).toBeDefined();
+        expect(notice).toMatch(/level 3/i);
+      }
+    }).pipe(Effect.provide(fullTestLayer)),
+  );
+
+  it.effect("persists a custom N cadence on a Level-1 soul AND surfaces a Level-3 notice", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.save(DEFAULT_SOURCE.name, 1, "off");
+
+      const loaded = yield* setHeartbeatEffect(10);
+
+      expect(Option.isSome(loaded)).toBe(true);
+      if (Option.isSome(loaded)) {
+        expect(loaded.value.heartbeatMode).toBe(10);
+        const notice = heartbeatLevelNotice(loaded.value.heartbeatMode, loaded.value.level);
+        expect(notice).toBeDefined();
+        expect(notice).toMatch(/level 3/i);
+      }
+    }).pipe(Effect.provide(fullTestLayer)),
+  );
+
+  it.effect("persists a lite cadence on a Level-3 soul with NO notice (no false warning)", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.save(DEFAULT_SOURCE.name, 3, "off");
+
+      const loaded = yield* setHeartbeatEffect("lite");
+
+      expect(Option.isSome(loaded)).toBe(true);
+      if (Option.isSome(loaded)) {
+        expect(loaded.value.heartbeatMode).toBe("lite");
+        const notice = heartbeatLevelNotice(loaded.value.heartbeatMode, loaded.value.level);
+        expect(notice).toBeUndefined();
+      }
+    }).pipe(Effect.provide(fullTestLayer)),
+  );
+
+  it.effect("setting off on a sub-Level-3 soul persists with NO notice (nothing to fire)", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.save(DEFAULT_SOURCE.name, 2, "lite");
+
+      const loaded = yield* setHeartbeatEffect("off");
+
+      expect(Option.isSome(loaded)).toBe(true);
+      if (Option.isSome(loaded)) {
+        expect(loaded.value.heartbeatMode).toBe("off");
+        const notice = heartbeatLevelNotice(loaded.value.heartbeatMode, loaded.value.level);
+        expect(notice).toBeUndefined();
       }
     }).pipe(Effect.provide(fullTestLayer)),
   );
