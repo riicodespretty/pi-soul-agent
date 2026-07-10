@@ -18,67 +18,85 @@ interface ResourcesDiscoverResult {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * _heartbeatCoordinator is an insurance policy against multiple closures
- * (Pi loads extensions via jiti with moduleCache:false, creating separate
- * closures each with independent counters). Only the first closure to
- * reach a matching turn sends the heartbeat; the rest skip.
+ * _heartbeatCoordinator is an insurance policy against multiple closures (Pi
+ * loads extensions via jiti with moduleCache:false, creating separate closures
+ * each with independent counters). Only the first closure to reach a given
+ * activation-anchored beat sends the heartbeat; the rest skip. The key is the
+ * activation identity plus the beat's turn-count — NOT a session-absolute turn —
+ * so it stays correct as the schedule re-anchors on each activation.
  */
-const _heartbeatCoordinator = { servicedAtTurn: -1 };
+const _heartbeatCoordinator = { servicedKey: null as string | null };
 
 /**
- * Register event handlers for the heartbeat reminder.
+ * The cadence SHAPES, unchanged from the original design; only the anchor point
+ * moved (ADR-0001). Prefix-summing an interval list from the Activation anchor
+ * gives the beats: `lite` fires every 6 turns; `full` cycles the mala
+ * [6, 3, 2, 3] (6 senses → 3 feelings → 2 states → 3 times, 108 in full);
+ * `off` never fires. Positions are counted from activation (count 0), not from
+ * session start.
+ */
+const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
+  off: [],
+  lite: [6],
+  full: [6, 3, 2, 3],
+};
+
+/**
+ * Register the `turn_end` event handler for the heartbeat reminder.
  *
- * Injects the active soul's heartbeat content as a reminder at intervals
- * following a Buddhist mala: 6 (senses) → 3 (feelings) → 2 (states) → 3 (times),
- * cycling across the full session.
+ * Every cadence is measured from the Activation anchor — the turn on which a
+ * Soul becomes active — not from session start (ADR-0001). Each turn the handler
+ * reads the Active Soul identity (`soul` + `updatedAt`); when it changes, the
+ * turn count resets to 0 and the schedule restarts. The activation turn is
+ * count 0 and does not itself fire; the first `lite` beat lands 6 turns later.
  *
- * The mala cycles through 6 Senses → 3 Feelings → 2 States → 3 Times,
- * which together multiply to 108 — the classic Buddhist mala count.
- * The counter persists across the full session (reset on `session_start`),
- * so each turn throughout the conversation advances the mala.
+ * Nothing counts while no Soul is active, so a scheduled turn reached while
+ * inactive can no longer freeze the schedule — the session-long wedge of
+ * issue #1 is structurally impossible, not merely patched. This supersedes the
+ * session-absolute counter and the tick-while-inactive workaround (c8b46f9).
  *
- * First heartbeat at turn 6 — spacious enough to ground into the work
- * before the first check-in arrives.
+ * Changing a Soul's level or heartbeat mode bumps `updatedAt`, re-anchoring the
+ * schedule (a deliberate "re-onboard" from the next turn). Reminders fire only
+ * for an active, Level-3 Soul with heartbeat content, and stay hidden from the
+ * visible conversation.
  */
 export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppRuntime): void {
+  // Activation-anchored scheduler state. `currentIdentity` is the Active Soul
+  // identity we are anchored to (null = none active); `count` is turns since the
+  // anchor (0 = the activation turn); `intervalIndex`/`nextTurnAt` walk the beats.
+  let currentIdentity: string | null = null;
+  let count = 0;
   let intervalIndex = 0;
-  let nextTurnAt = 6;
-  let totalTurns = 0;
-
-  pi.on("session_start", async () => {
-    intervalIndex = 0;
-    nextTurnAt = 6;
-    totalTurns = 0;
-  });
+  let nextTurnAt = 0;
 
   pi.on("turn_end", async (_event, ctx) => {
-    totalTurns++;
-    if (totalTurns !== nextTurnAt) return;
-
     const heartbeatPipeline = Effect.gen(function* () {
       const persistence = yield* ActiveSoulPersistence;
       const activeSoul = yield* persistence.load();
-      if (!Option.isSome(activeSoul)) return { active: false as const };
+      if (!Option.isSome(activeSoul)) return { present: false as const };
 
       const soul = activeSoul.value;
+      // Activation identity: the Soul name plus its updatedAt. Any level or
+      // heartbeat-mode change bumps updatedAt, so identity change re-anchors.
+      const identity = `${soul.soul}@${soul.updatedAt}`;
+      const mode = soul.heartbeatMode ?? ("lite" as const);
 
-      // Eager exit: if heartbeat is disabled in persistence, skip entirely
-      if (soul.heartbeatMode === "off") return { active: false as const };
-
-      // heartbeatContent is only available at level >= 3
-      if (soul.level < 3) return { active: false as const };
+      // The Level-3 + content gate. Disabled, below Level 3, or with no
+      // heartbeat content, the Soul is present (it still anchors the schedule)
+      // but has nothing to send.
+      if (mode === "off" || soul.level < 3) {
+        return { present: true as const, identity, mode, content: null };
+      }
 
       const loader = yield* SoulSpecLoader;
       const manifest = yield* loader.getSoul(soul.soul, soul.level);
-
       const content = Option.fromNullable(manifest.heartbeatContent);
-      if (Option.isNone(content)) return { active: false as const };
 
       return {
-        active: true as const,
-        content: content.value,
-        // Use heartbeat mode from persisted settings (default "lite" = single interval)
-        mode: soul.heartbeatMode ?? ("lite" as const),
+        present: true as const,
+        identity,
+        mode,
+        content: Option.isNone(content) ? null : content.value,
       };
     });
 
@@ -97,39 +115,48 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
       return;
     }
 
-    // Advance the mala schedule whenever a scheduled turn is reached, REGARDLESS
-    // of whether a heartbeat actually fires. Decoupling "advance" from "send" is
-    // the fix for the session-long wedge (issue #1): a scheduled turn reached
-    // while inactive (no active soul yet, mode "off", level < 3, or no content)
-    // used to freeze nextTurnAt, so the strict gate above never matched again.
-    // lite: single 6-interval (every 6 turns); full: full mala cycle [6, 3, 2, 3].
-    // While inactive we have no mode, so tick on the lite cadence (matches the
-    // initial nextTurnAt = 6 and the default heartbeat mode).
-    const HEARTBEAT_INTERVALS: Record<HeartbeatMode, readonly number[]> = {
-      off: [],
-      lite: [6],
-      full: [6, 3, 2, 3],
-    };
-    const mode = result.active ? result.mode : "lite";
-    const intervals = HEARTBEAT_INTERVALS[mode];
+    // No active Soul: nothing counts. Drop the anchor so the next activation
+    // starts a fresh schedule from count 0.
+    if (!result.present) {
+      currentIdentity = null;
+      return;
+    }
+
+    // New activation identity → re-anchor: the activation turn is count 0 (no
+    // fire) and the schedule restarts at the first beat.
+    if (result.identity !== currentIdentity) {
+      currentIdentity = result.identity;
+      count = 0;
+      intervalIndex = 0;
+      const intervals = HEARTBEAT_INTERVALS[result.mode];
+      nextTurnAt = intervals.length > 0 ? intervals[0] : 0;
+      return;
+    }
+
+    // Same activation: advance the count and act only on a scheduled beat.
+    count++;
+    const intervals = HEARTBEAT_INTERVALS[result.mode];
+    if (intervals.length === 0 || count !== nextTurnAt) return;
+
+    // Advance to the next beat (the mala cycles; lite repeats every 6). This
+    // runs whether or not we actually send, keeping the cadence ticking.
     intervalIndex = (intervalIndex + 1) % intervals.length;
     nextTurnAt += intervals[intervalIndex];
 
-    // Only an active, level-3 soul with heartbeat content actually sends.
-    if (!result.active) return;
+    // Only an active, Level-3 Soul with heartbeat content actually sends.
+    if (result.content === null) return;
 
-    // Module-level dedup: if another closure already sent a heartbeat at this
-    // turn, skip the send — but the schedule above has already advanced, so this
-    // closure stays on cadence. Record service only AFTER an actual send, so an
-    // inactive turn never falsely claims a turn away from a sibling closure.
-    if (_heartbeatCoordinator.servicedAtTurn >= totalTurns) return;
-    _heartbeatCoordinator.servicedAtTurn = totalTurns;
+    // Module-level dedup: if a sibling closure already serviced this exact
+    // activation-anchored beat, skip the send. Keyed on identity + count (not a
+    // session-absolute turn), and recorded only AFTER an actual send.
+    const beatKey = `${result.identity}#${count}`;
+    if (_heartbeatCoordinator.servicedKey === beatKey) return;
+    _heartbeatCoordinator.servicedKey = beatKey;
 
-    // No deliverAs option: when the agent is idle (not streaming), this
-    // appends immediately to agent.state.messages and persists to the session,
-    // rather than queueing in _pendingNextTurnMessages to be flushed on the
-    // next user message.
-    // Wrap in XML tags so the LLM can distinguish this as an automatic
+    // No deliverAs option: when the agent is idle (not streaming), this appends
+    // immediately to agent.state.messages and persists to the session, rather
+    // than queueing in _pendingNextTurnMessages to be flushed on the next user
+    // message. Wrap in XML tags so the LLM can distinguish this as an automatic
     // system reminder rather than a direct user message.
     pi.sendMessage({
       customType: "soul-heartbeat-reminder",
