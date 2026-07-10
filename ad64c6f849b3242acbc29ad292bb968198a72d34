@@ -7,10 +7,10 @@
 #   docs/rationale/types.md — heartbeat mode widening (see also ADR-0001)
 #   docs/rationale/events.test.md — heartbeat test harness: model-under-test + per-case turn derivations
 #
-# Per-file design rationale extracted from inline comments. Each source file keeps a
-# one-line pointer ("// Rationale [N] → …") back to the numbered block here; [N] matches
-# the block order top-to-bottom in that source file. Anchored to root commit in
-# ref refs/notes/docs-code-rationale.
+# Per-file design rationale. The codebase carries NO inline comments — git notes is the
+# sole documentation source (project decision, 2026-07-10): code self-explains, and the
+# "why" lives here. Sections are ordered top-to-bottom as the rationale appeared in each
+# source file at extraction time. Anchored to root commit in ref refs/notes/docs-code-rationale.
 
 ===== FILE: docs/rationale/errors.md =====
 # Error model (src/errors.ts)
