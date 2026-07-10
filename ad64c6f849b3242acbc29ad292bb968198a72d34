@@ -1,0 +1,44 @@
+# docs-adr — Architecture Decision Records
+#
+# File index:
+#   docs/adr/0001-heartbeat-anchors-to-activation.md — heartbeat schedule anchors to soul activation
+#
+# Anchored to root commit in ref refs/notes/docs-adr. Skills: docs-in-git-notes + domain-modeling.
+
+===== FILE: docs/adr/0001-heartbeat-anchors-to-activation.md =====
+# Heartbeat schedule anchors to soul activation, not session start
+
+Status: accepted — implementation pending (2026-07-10)
+
+## Context
+Heartbeat reminders were scheduled on an absolute, session-long turn counter that advanced
+whether or not a Soul was active and reset only on `session_start`. That produced the wedge in
+issue #1 (a scheduled turn reached while inactive froze the schedule for the whole session), and
+meant a Soul activated late in a session landed in the sparse tail of the cadence, never getting
+the frequent early grounding the `full` mala ramp exists to give.
+
+## Decision
+Anchor every heartbeat cadence — `lite`, `full`, and custom `N` — to the Activation anchor: the
+turn on which a Soul becomes active. The `turn_end` scheduler watches the active-soul identity
+(`soul` + `updatedAt`); when it changes, the turn count resets to 0 (no fire at 0) and the schedule
+is recomputed. `full` becomes a from-activation ramp-then-plateau — prefix products of [6, 3, 2, 3]:
+fire at 6, 18, 36, 108 turns after activation, then every 108. `heartbeatMode` widens to
+`off | lite | full | positive-integer N` (fire every N turns).
+
+## Considered options
+- Session-start anchor (original): smaller change, keeps issue #1's tick-while-inactive patch — but
+  late activations sit in the plateau dead-zone and the wedge risk stays latent.
+- Activation anchor (chosen): the ramp's onboarding taper (frequent -> sparse) is only meaningful
+  measured from activation, and re-anchoring makes the session-long wedge structurally impossible —
+  nothing counts until a Soul is active.
+
+## Consequences
+- Reverses the fix committed for issue #1 (c8b46f9, unpushed). That patch and its
+  tests/events.test.ts regression will be reworked; the git-notes #1 finding is superseded in design
+  by this ADR.
+- Contradicts the README line "the counter runs across the full session, resetting only on
+  session_start" — README must be updated as part of the implementation.
+- A Soul's heartbeat schedule restarts on every level / heartbeat-mode change (a deliberate
+  "re-onboard" semantic), not preserved across the change.
+- The Level-3 content gate is unchanged: setting a cadence on a sub-Level-3 Soul persists but warns,
+  since heartbeat content only loads at Level 3.
