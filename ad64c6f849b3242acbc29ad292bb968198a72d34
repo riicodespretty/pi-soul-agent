@@ -64,7 +64,10 @@ tagged type via Effect.catchTag("SoulLoadError", ...).
   scheduled turn is 6; a single inactive turn-6 wedges heartbeats for the whole session; only
   `session_start` recovers. Deterministic repro (RED, exit 1): the registration-level harness in the
   triage section. Secondary defect: `:61` sets the coordinator "serviced" before the active-check.
-  NOT fixed (triage-only).
+  Status (2026-07-10): a fix was committed locally (c8b46f9, "advance/tick on lite while inactive",
+  unpushed) — but that approach is SUPERSEDED IN DESIGN by ADR-0001 (docs-adr): the schedule will
+  re-anchor to soul activation, making this wedge structurally impossible. Re-implementation pending;
+  the c8b46f9 patch and its tests/events.test.ts will be reworked. Not yet resolved in code.
 
 ### Previously-unverified notes (still open)
 - Heartbeat scheduler wedge (events.ts turn_end). `nextTurnAt` advances ONLY on the branch
