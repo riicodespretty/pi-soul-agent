@@ -184,7 +184,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
             {
               value: "--heartbeat full",
               label: "full",
-              description: "Full mala cycle (Every 6→3→2→3 turns)",
+              description: "Ramp then plateau: 6, 18, 36, 108, then every 108",
             },
             {
               value: "--heartbeat off",
@@ -231,7 +231,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           "Heartbeat mode:",
           "  --heartbeat off    Disable heartbeat reminders",
           "  --heartbeat lite   Every 6 turns (default)",
-          "  --heartbeat full   Full mala cycle 6→3→2→3",
+          "  --heartbeat full   Mala ramp: fires 6, 18, 36, 108, then every 108 (from activation)",
           "  --heartbeat <N>    Custom: every N turns from activation (positive whole number)",
           "",
           "Tab-completion shows available souls with descriptions.",
@@ -241,7 +241,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           "  /soul developer --level 3  (full disclosure)",
           "  /soul --clear, -c          (deactivate current soul)",
           "  /soul --heartbeat lite     (reduce heartbeat frequency)",
-          "  /soul --heartbeat full     (full mala cycle)",
+          "  /soul --heartbeat full     (mala ramp-then-plateau)",
           "  /soul --heartbeat 10       (custom: every 10 turns)",
         ].join("\n");
         notifyUI(ctx, helpMsg, "info");
@@ -291,11 +291,16 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
           notifyUI(ctx, levelNotice, "warning");
         }
 
-        notifyUI(
-          ctx,
-          `Heartbeat mode set to ${parsed.mode}. Will take effect after restart or /reload.`,
-          "info",
-        );
+        // Path-aware, honest timing: off disables; a sub-Level-3 cadence already
+        // got its needs-L3 notice just above (so no next-turn claim here); an
+        // active Level-3 cadence re-anchors and takes effect on the next turn.
+        const settingMsg =
+          parsed.mode === "off"
+            ? "Heartbeat reminders disabled."
+            : levelNotice
+              ? `Heartbeat mode set to ${parsed.mode}.`
+              : `Heartbeat mode set to ${parsed.mode}. Takes effect on the next turn.`;
+        notifyUI(ctx, settingMsg, "info");
         return;
       }
 
