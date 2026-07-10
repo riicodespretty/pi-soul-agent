@@ -1,0 +1,3285 @@
+# docs-history-testing — History — test frailty & isolation (TP-008)
+#
+# File index (13 docs):
+#   docs/TP-008/00-synthesis.md — TP-008: Test Frailty Audit & Isolation Strategy
+#   docs/TP-008/01-researcher-external-patterns.md — Research: Effect-TS Testing Isolation Patterns (External Evidence)
+#   docs/TP-008/02-scout-codebase-inventory.md — Code Context — Test Frailty Inventory
+#   docs/TP-008/03-researcher-tradeoffs.md — Research: Practical Tradeoffs for Effect-TS Test Frailty Mitigation
+#   docs/TP-008/04-handoff-plan.md — TP-008: Test Frailty Mitigation — Handoff Plan
+#   docs/TP-008/04-oracle-audit.md — Oracle Challenge: TP-008 Test Frailty Audit
+#   docs/TP-008/05-worker-implementation.md — Implementation Complete
+#   docs/TP-008/06-reviewer-correctness.md — Review: TP-008 Implementation — Correctness and Regressions
+#   docs/TP-008/07-reviewer-tests.md — Review: TP-008 Tests and Validation
+#   docs/TP-008/08-reviewer-typesafety.md — Review: TP-008 Implementation — Type Safety and Effect-TS Discipline
+#   docs/TP-008/8db4a67b/progress.md — Progress
+#   docs/TP-008/8ddaa37e/progress.md — Progress
+#   docs/TP-008/TP-008-handoff-plan.md — (no title)
+#
+# Migrated from the working tree into git notes (ref refs/notes/docs-history-testing),
+# anchored to root commit ad64c6f849b3242acbc29ad292bb968198a72d34. Skill: docs-in-git-notes.
+
+===== FILE: docs/TP-008/00-synthesis.md =====
+# TP-008: Test Frailty Audit & Isolation Strategy
+
+## Context
+
+Following TP-007 (which removed the `catchAll(() => succeed(null))` anti-pattern from tests), this TP conducts a broader audit of test frailty in the pi-soul-agent test suite. Two issues were raised:
+
+1. **`SoulSpecLoader.Default` is a singleton** — tests share cache state via `Ref<Map>`, making Test 3 (`listSouls returns []`) dependent on execution order.
+2. **Tests assume `bodhisattva-coder` exists on disk** — tests fail on CI or other machines without this soul installed.
+
+## Research Method
+
+Three parallel subagents (fresh context, no fork):
+
+| Subagent                  | Angle               | Scope                                                                                                                                                     |
+| ------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **researcher** (fbdc03ae) | External evidence   | Effect-TS official testing isolation patterns, `Layer.fresh`, `FileSystem.layerNoop`, `Effect.option`, `Layer.mock`, TestContext, vitest isolation        |
+| **scout** (e3e92408)      | Local code context  | Full inventory of all test frailty issues — singleton state, env coupling, ordering deps, missing infra, error handling, coverage gaps, concurrency risks |
+| **researcher** (2ef2ecbe) | Practical tradeoffs | Compare approaches for each frailty issue — migration cost, risk, confidence, recommended path                                                            |
+
+## What We Know
+
+### 31 distinct frailty findings across 7 categories
+
+| Category                           | HIGH   | MEDIUM | LOW   | Total  |
+| ---------------------------------- | ------ | ------ | ----- | ------ |
+| 1. Singleton / Shared State        | 2      | 1      | 1     | 4      |
+| 2. Environment Coupling            | 2      | 1      | 2     | 5      |
+| 3. Test Ordering Dependencies      | 1      | 1      | 0     | 2      |
+| 4. Missing Test Infrastructure     | 2      | 2      | 2     | 6      |
+| 5. Error Handling Frailty          | 1      | 2      | 0     | 3      |
+| 6. Missing Error Path Coverage     | 3      | 4      | 1     | 8      |
+| 7. Concurrency / Parallelism Risks | 2      | 1      | 0     | 3      |
+| **Total**                          | **13** | **12** | **6** | **31** |
+
+**24 of 31 findings are new** (not captured in TP-007 docs). Only 7 were previously known.
+
+### The 5 Critical Frailties (HIGH/HIGH)
+
+| #   | Finding                                                          | File                       | Why Critical                                                                                 |
+| --- | ---------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------- |
+| 1   | `SoulSpecLoader.Default` singleton cache shared across all tests | `loader.test.ts` all tests | Test 3 breaks if execution order changes; tests cannot be parallelized                       |
+| 2   | No cache reset mechanism (`beforeEach`/`afterEach`)              | `loader.test.ts`           | Cache is never cleared between tests — state leaks persist forever                           |
+| 3   | Tests mutate `process.env.HOME` outside Effect context           | `soul-fs.test.ts:75-88`    | Race condition under parallel execution; env mutation before Effect creation                 |
+| 4   | Tests depend on real filesystem souls                            | `loader.test.ts` multiple  | Fails on CI, other machines, or if soul directory is missing                                 |
+| 5   | Shared cache + env mutation + no vitest config = zero guardrails | system-wide                | The combination means any parallel execution or reordering causes non-deterministic failures |
+
+## What the Local Codebase Implies
+
+### Singleton Architecture
+
+`SoulSpecLoader` (src/loader.ts:59-386) is an `Effect.Service` — by design it creates a single shared `Ref<Map<string, CacheEntry>>`. This is correct for production (shared cache across requests), but causes test isolation problems. The fix must be test-side only: **no production code changes** should be needed.
+
+### Environment Coupling Pattern
+
+`resolveOsHomeDir` (src/services/soul-fs.ts:43) reads `process.env` directly — a synchronous boundary call that bypasses Effect's dependency injection. This is a legacy pattern predating the Effect-TS refactoring. Full idiomatic fix would refactor to Effect's `Config` layer, but `vi.stubEnv` is the pragmatic interim fix.
+
+### Error Handling Architecture
+
+6 production error types exist (`SoulNotFoundError`, `NoSoulsFoundError`, `ManifestParseError`, `FileSystemError`, `SoulLoadError`, plus internal error remapping in `loadSoul`). Only `SoulLoadError._tag` is tested (1 test, partial). The error remapping pipeline (internal errors → `SoulLoadError`) has **zero test coverage** — this is a blind spot in production reliability.
+
+### No Test Infrastructure
+
+There is no `vitest.config.ts`, no setup file, no shared test helpers, no mock layers, no test fixtures directory. Every test file is self-contained and duplicates patterns. This is the root cause of most frailty — there's no central place to control test behavior.
+
+## Tradeoffs and Risks
+
+### Issue A: Singleton Cache — `Layer.fresh` is the clear winner
+
+| Approach                                       | Risk   | Confidence | Verdict                                                              |
+| ---------------------------------------------- | ------ | ---------- | -------------------------------------------------------------------- |
+| `Layer.fresh(SoulSpecLoader.Default)` per test | Low    | ⭐⭐⭐⭐⭐ | **✅ RECOMMENDED** — idiomatic, zero prod changes, ~3 chars per test |
+| Cache reset method on service                  | Low    | ⭐⭐⭐     | Adds prod API surface for testing — anti-pattern                     |
+| `Ref.set(cache, new Map())` in afterEach       | Medium | ⭐⭐⭐     | Hacky, race condition risk                                           |
+| `Layer.scoped`                                 | Medium | ⭐⭐⭐     | Overkill — service has no resource lifecycle                         |
+
+**Applies to:** All 7 `Effect.provide(SoulSpecLoader.Default)` calls in `loader.test.ts`.
+
+### Issue B: Real Filesystem Coupling — Mixed strategy recommended
+
+| Approach                                     | Risk   | Confidence | Verdict                                                  |
+| -------------------------------------------- | ------ | ---------- | -------------------------------------------------------- |
+| `FileSystem.layerNoop` for unit tests        | Low    | ⭐⭐⭐⭐⭐ | **✅ PRIMARY** — official `@effect/platform` mock FS API |
+| Test fixture directory for integration tests | Low    | ⭐⭐⭐⭐   | **✅ SECONDARY** — smoke tests against real FS           |
+| Custom mock FS layer                         | Medium | ⭐⭐⭐     | Unnecessary — `layerNoop` exists                         |
+| Inline fixtures via `Layer.succeed`          | Low    | ⭐⭐⭐     | Good for unit tests, skips FS code paths                 |
+
+**Key insight:** `FileSystem.layerNoop` from `@effect/platform` is the official, built-in mock filesystem. It returns `Effect.fail` (not-found) by default and allows partial overrides. No external dependencies needed.
+
+### Issue C: Environment Pollution — `vi.stubEnv` is simplest
+
+| Approach                          | Risk   | Confidence | Verdict                                                   |
+| --------------------------------- | ------ | ---------- | --------------------------------------------------------- |
+| `vi.stubEnv` / `vi.unstubAllEnvs` | Low    | ⭐⭐⭐⭐⭐ | **✅ RECOMMENDED** — Vitest-native, auto-restored, scoped |
+| Effect `Config` layer refactoring | Medium | ⭐⭐⭐⭐   | Idiomatic long-term fix but larger scope                  |
+
+### Issue D: Missing Infrastructure — Add config + helpers
+
+| Approach                                     | Risk | Confidence | Verdict            |
+| -------------------------------------------- | ---- | ---------- | ------------------ |
+| Extend `vite.config.ts` with test section    | Low  | ⭐⭐⭐⭐⭐ | **✅ RECOMMENDED** |
+| Add `tests/helpers.ts` with shared utilities | Low  | ⭐⭐⭐⭐⭐ | **✅ RECOMMENDED** |
+
+### Issue E: Error Coverage Gaps — ~80 lines of targeted tests
+
+| Gap                                         | Effort    | Priority |
+| ------------------------------------------- | --------- | -------- |
+| `ManifestParseError` from invalid JSON      | ~10 lines | P1       |
+| `NoSoulsFoundError` from empty search paths | ~15 lines | P1       |
+| `FileSystemError` from unreadable file      | ~10 lines | P2       |
+| `filterByLevel` level 2 test                | ~8 lines  | P2       |
+| Fuzzy name resolution                       | ~15 lines | P3       |
+
+## Gaps or Assumptions
+
+1. **Vite+ compatibility:** The project uses Vite+ (`vp test`) which wraps vitest. Need to verify that adding vitest config (either `vitest.config.ts` or extending `vite.config.ts` with `test` section) works correctly with Vite+. If not, may need a different config approach.
+
+2. **`@effect/platform` v0.96.0 `FileSystem.layerNoop` availability:** The current version should include `layerNoop` but API surface details (e.g., `readDirectory` options type) need confirmation against the installed version.
+
+3. **`Layer.fresh` + `Effect.Service` interaction:** While documented behavior confirms `Layer.fresh` creates a non-memoized copy, the exact interaction with `Effect.Service`'s `effect:` constructor should be verified with a quick integration test (see Gaps section in 01-researcher-external-patterns.md).
+
+4. **`Layer.mock` + `Effect.Service` compatibility:** Issue #5833 documents that `Layer.mock` requires ALL non-Effect properties including `_tag` from `Effect.Service`. This may complicate using `Layer.mock` for partial mocking of `SoulSpecLoader`.
+
+## The Recommended Next Move
+
+### Phase 1: Foundation (low risk, high confidence)
+
+1. Add `vitest.config.ts` (or extend `vite.config.ts` with `test` property)
+2. Create `tests/helpers.ts` — shared test utilities (`freshLoaderLayer`, `mockFsLayer`, `MOCK_SOUL_MANIFEST`)
+3. Convert `soul-fs.test.ts` env mutation to `vi.stubEnv` / `vi.unstubAllEnvs`
+
+### Phase 2: Isolation (core fragility fix)
+
+4. Apply `Layer.fresh(SoulSpecLoader.Default)` to all tests in `loader.test.ts`
+5. Verify Test 3 (`listSouls returns []`) passes regardless of ordering
+
+### Phase 3: Mock FS (CI portability)
+
+6. Create `MockFileSystemLayer` via `FileSystem.layerNoop` with fixture souls
+7. Migrate `loader.test.ts` from `NodeFileSystemLayer` to `MockFileSystemLayer`
+8. Verify tests pass with `HOME=/nonexistent` (no real souls needed)
+
+### Phase 4: Error Coverage (production confidence)
+
+9. Add `ManifestParseError` test (invalid JSON)
+10. Add `NoSoulsFoundError` test (empty search paths)
+11. Add `FileSystemError` test (unreadable file)
+12. Add `filterByLevel` level 2 test
+
+### Total Migration Cost
+
+- **New files:** 2 (`tests/vitest.setup.ts`, `tests/helpers.ts`)
+- **Modified files:** 2 (`tests/services/loader.test.ts`, `tests/services/soul-fs.test.ts`)
+- **Lines added:** ~150 (config + helpers + mock FS + error tests)
+- **Lines removed:** ~15 (manual env save/restore, boilerplate)
+- **Production code changes:** **Zero**
+- **Risk of test regression:** Low — all changes are test-side layer replacements
+- **CI confidence:** High — tests no longer depend on developer's machine state
+
+## Disagreements and Nuances
+
+- **`Layer.fresh` vs cache reset:** All three subagents agree `Layer.fresh` is the right approach. No disagreement.
+- **`FileSystem.layerNoop` vs custom mock:** The tradeoffs researcher flagged a potential Vite+ compatibility issue not raised by the external evidence researcher. The scout confirmed no mock layers exist today. The three findings are complementary.
+- **Error coverage priority:** The scout identified 8 coverage gaps; the tradeoffs researcher recommended 5 as high-priority (~80 lines). Agreement on the top 3 (`ManifestParseError`, `NoSoulsFoundError`, `FileSystemError`).
+- **Env mutation severity:** The scout rated `process.env.HOME` mutation as HIGH severity (race condition under parallel execution). The tradeoffs researcher agreed and recommended `vi.stubEnv`. Agreement.
+- **`effect-memfs` community package:** The external evidence researcher mentioned it as an option; the tradeoffs researcher dismissed it in favor of `FileSystem.layerNoop`. The scout confirmed no such package is installed. Consensus: use `layerNoop`, avoid the external dependency.
+
+---
+
+**See subagent outputs:**
+
+- [01-researcher-external-patterns.md](./01-researcher-external-patterns.md)
+- [02-scout-codebase-inventory.md](./02-scout-codebase-inventory.md)
+- [03-researcher-tradeoffs.md](./03-researcher-tradeoffs.md)
+
+===== FILE: docs/TP-008/01-researcher-external-patterns.md =====
+# Research: Effect-TS Testing Isolation Patterns (External Evidence)
+
+**Date:** 2026-05-15
+**Context:** pi-soul-agent project testing isolation improvements — `SoulSpecLoader.Default` singleton cache, filesystem deps, and catchAll anti-patterns.
+**Agent:** researcher (fbdc03ae)
+**Run:** Parallel research → TP-008 test frailty audit
+
+---
+
+## 1. Layer.fresh — Per-Test Singleton Isolation
+
+`Layer.fresh(layer)` creates a **non-shared copy** of a layer, breaking Effect's default memoization-by-reference-identity. Each call to `Layer.fresh` produces a fresh instance that will be constructed independently, even if the same base layer reference appears multiple times in the dependency graph. For per-test isolation, provide `Layer.fresh(MyService.Default)` inside each test's `.pipe(Effect.provide(...))`.
+
+**Source:** `packages/effect/src/Layer.ts` at lines 12–13, JSDoc `@since 2.0.0`:
+
+> "By default layers are shared, meaning that if the same layer is used twice the layer will only be allocated a single time."
+
+**Source:** Effect Official Docs — Layer Memoization (`effect.website/docs/requirements-management/layer-memoization/`, exact code):
+
+```typescript
+// Without Layer.fresh: ALive is instantiated ONCE and shared
+const runnable = Effect.provide(
+  program,
+  Layer.merge(Layer.provide(BLive, ALive), Layer.provide(CLive, ALive)),
+);
+// Output: timestamp=... level=INFO fiber=#2 message=initialized  (only once)
+
+// With Layer.fresh: ALive is instantiated TWICE (each branch gets its own)
+const runnable = Effect.provide(
+  program,
+  Layer.merge(Layer.provide(BLive, Layer.fresh(ALive)), Layer.provide(CLive, Layer.fresh(ALive))),
+);
+// Output:
+// timestamp=... level=INFO fiber=#2 message=initialized
+// timestamp=... level=INFO fiber=#3 message=initialized
+```
+
+**Source:** Effect Solutions — Services & Layers guide (`www.effect.solutions/services-and-layers`, exact code):
+
+```typescript
+// Per-test layering (preferred) — each test provides its own layer
+it.effect("starts at zero", () =>
+  Effect.gen(function* () {
+    const counter = yield* Counter;
+    expect(yield* counter.get()).toBe(0);
+  }).pipe(Effect.provide(Counter.layer)),
+);
+
+it.effect("increments without leaking", () =>
+  Effect.gen(function* () {
+    const counter = yield* Counter;
+    yield* counter.increment();
+    expect(yield* counter.get()).toBe(1);
+  }).pipe(Effect.provide(Counter.layer)),
+);
+```
+
+The guide says: _"By default, provide a fresh layer inside each it.effect so state never leaks between tests. Use it.layer only when you need to share an expensive resource—like a database connection—across an entire suite. If you're not sure, skip it.layer."_
+
+### For `SoulSpecLoader.Default` specifically
+
+Since `SoulSpecLoader` uses `Effect.Service`, the pattern is:
+
+```typescript
+// Each test provides a fresh copy via Layer.fresh
+it.effect("test isolation", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    // Use loader...
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(NodeFileSystem.layer),
+  ),
+);
+```
+
+### Confidence: HIGH
+
+### Gap: `Layer.fresh` works on `Layer` references, but `Effect.Service` produces a `Layer`. Need to verify that `Layer.fresh(Service.Default)` works correctly when `Service.Default` has `dependencies: []` that reference external layers — the external layers are NOT fresh'd, only the Service itself.
+
+---
+
+## 2. TestFileSystem / Mock Filesystem
+
+`@effect/platform` provides **`FileSystem.layerNoop`** — a test-only filesystem layer where all operations return failures by default, but can be partially overridden with mock implementations. Additionally, **`FileSystem.makeNoop`** creates a no-op `FileSystem` instance (not a `Layer`). For a full in-memory filesystem, the community package **`effect-memfs`** (`github.com/nounder/effect-memfs`) provides `MemoryFileSystem.layerWith({...})` that implements all operations including file watching via `memfs`.
+
+**Source:** `@effect/platform` — FileSystem docs (`effect.website/docs/platform/file-system/#mocking-the-file-system`, exact code):
+
+```typescript
+import { FileSystem } from "@effect/platform";
+import { Effect } from "effect";
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const exists = yield* fs.exists("/some/path");
+  console.log(exists);
+  const content = yield* fs.readFileString("/some/path");
+  console.log(content);
+});
+
+//      ┌─── Layer<FileSystem.FileSystem, never, never>
+//      ▼
+const customMock = FileSystem.layerNoop({
+  readFileString: () => Effect.succeed("mocked content"),
+  exists: (path) => Effect.succeed(path === "/some/path"),
+});
+
+Effect.runPromise(program.pipe(Effect.provide(customMock)));
+// Output:
+// true
+// mocked content
+```
+
+**Source:** `@effect/platform` — FileSystem API docs (`effect-ts-effect-smol-1.mintlify.app/api/filesystem`, `makeNoop` section):
+
+```typescript
+import { Effect, FileSystem } from "effect";
+
+const testFs = FileSystem.makeNoop({
+  readFileString: (path) => {
+    if (path === "test-config.json") {
+      return Effect.succeed('{"test": true}');
+    }
+    return Effect.fail(
+      PlatformError.systemError({
+        _tag: "NotFound",
+        module: "FileSystem",
+        method: "readFileString",
+        description: "File not found",
+        pathOrDescriptor: path,
+      }),
+    );
+  },
+  exists: (path) => Effect.succeed(path === "test-config.json"),
+});
+```
+
+**Source:** `effect-memfs` (`github.com/nounder/effect-memfs` — community package):
+
+```typescript
+import { FileSystem } from "@effect/platform";
+import { Effect } from "effect";
+import { MemoryFileSystem } from "effect-memfs";
+
+const MockedFiles = MemoryFileSystem.layerWith({
+  "/index.html": `<h1>Welcome to my website</h1>`,
+  "/home/.profile": `export PATH=$PATH:$HOME/bin`,
+});
+
+const App = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  console.log("Root directories", yield* fs.readDirectory("/"));
+});
+
+Effect.runPromise(App.pipe(Effect.provide(MockedFiles)));
+```
+
+Note: `effect-memfs` is not published to npm; it requires cloning from GitHub or copying the source.
+
+**Source:** Effect 3.17 Release — **`Layer.mock`** (`effect.website/blog/releases/effect/317/`, added July 2025):
+
+```typescript
+import { Context, Effect, Layer } from "effect";
+
+class MyService extends Context.Tag("MyService")<
+  MyService,
+  {
+    one: Effect.Effect<number>;
+    two(): Effect.Effect<number>;
+  }
+>() {}
+
+// Mocking a service with a partial implementation
+const MyServiceTest = Layer.mock(MyService, {
+  two: () => Effect.succeed(2),
+});
+// 'one' throws UnimplementedError defect when called
+```
+
+**Known limitation** (Issue #5833, Nov 2025, labeled "working as intended"): `Layer.mock` requires ALL non-Effect properties to be provided — you can't pass a partial if the service interface has plain functions or non-Effect properties. This affects `Effect.Service` because of the auto-generated `_tag` field and `Context.Tag` services with non-Effect methods like `@effect/platform/Path`.
+
+### Recommended pattern for SoulSpecLoader
+
+Use `Layer.mock` for a partial `SoulSpecLoader` that returns fixture data without filesystem I/O:
+
+```typescript
+import { Layer } from "effect";
+import { SoulSpecLoader } from "../src/SoulSpecLoader.js";
+
+const SoulSpecLoaderTest = Layer.mock(SoulSpecLoader, {
+  loadSoul: (soul: string) => Effect.succeed({ name: soul, level: 2 }),
+  getSoul: (name: string) => Effect.succeed({ name, level: 2 }),
+  enumerateSouls: () => Effect.succeed(["bodhisattva-coder"]),
+});
+```
+
+Alternatively, use `Layer.fresh(SoulSpecLoader.Default)` + `FileSystem.layerNoop` for testing the real loader with a mock FS.
+
+### Confidence: HIGH
+
+### Gap: `effect-memfs` is community-maintained and not on npm. `FileSystem.layerNoop` was present in `@effect/platform` at least since v3.x but the exact version is unconfirmed. `Layer.mock` is available in Effect 3.17+ (July 2025). `Effect.Service` + `Layer.mock` has the `_tag` partial issue (Issue #5833, working as intended).
+
+---
+
+## 3. Effect's Own Test Suite — FileSystem Testing Patterns
+
+The Effect team does **not** use a mock filesystem in their own tests. Instead, they use **`makeTempDirectoryScoped`** to create real temporary directories, write fixture files with `writeFileString`, and clean up via `Scope`. Tests use `it.scoped` for automatic scope-based cleanup and `NodeFileSystem.layer` for the real FS.
+
+**Source:** `packages/platform-node-shared/test/FileSystem.test.ts` (at commit 82996bce):
+
+```typescript
+import * as NodeFileSystem from "@effect/platform-node-shared/NodeFileSystem";
+import * as Fs from "@effect/platform/FileSystem";
+import { assert, describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+
+// Pattern: real FS, temp dirs, scoped cleanup
+rootFile = `${dir}/root.txt`;
+yield * fs.writeFile(rootFile, "root file");
+
+const subFile = `${subdir}/sub.txt`;
+yield * fs.writeFile(subFile, "sub file");
+```
+
+**For testing code that depends on filesystem with known fixtures**, the recommended pattern from Effect's codebase is:
+
+```typescript
+it.scoped("test with temp files", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "test-" });
+    yield* fs.writeFileString(
+      `${dir}/soul.json`,
+      JSON.stringify({
+        name: "bodhisattva-coder",
+        level: 2,
+      }),
+    );
+    // Test code that reads from dir
+    const content = yield* fs.readFileString(`${dir}/soul.json`);
+    expect(JSON.parse(content).name).toBe("bodhisattva-coder");
+  }),
+);
+```
+
+### Confidence: HIGH
+
+### Gap: The Effect team primarily tests platform-specific code against the real FS. For application-level code (like `SoulSpecLoader`), the `FileSystem.layerNoop` or `Layer.mock` patterns are more appropriate.
+
+---
+
+## 4. Effect.option vs catchAll(() => succeed(null))
+
+`Effect.option` wraps an effect's **failure** into `Option.none` while **preserving defect (Die) and interruption propagation**. `Effect.catchAll(() => Effect.succeed(null))` catches **all three**: `Fail`, `Die`, and `Interrupt`. `Effect.option` is a partial improvement over `catchAll(null)` — it at least lets defects crash properly — but both lose error information. For tests, prefer `Effect.either` (infallible, preserves error value) or `Effect.flip` (for direct error assertions).
+
+**Source:** Effect Official Docs — Expected Errors (`effect.website/docs/guides/error-management/expected-errors`):
+
+```typescript
+const maybe1 = Effect.option(Effect.succeed(1));
+// Exit.Success(Option.Some(1))
+
+const maybe2 = Effect.option(Effect.fail("Uh oh!"));
+// Exit.Success(Option.None)  ← failure mapped to None
+
+const maybe3 = Effect.option(Effect.die("Boom!"));
+// Exit.Failure(Cause.Die)  ← defect PROPAGATES, not caught
+```
+
+Key distinction from `catchAll`:
+
+```typescript
+// catchAll catches EVERYTHING — Fail, Die, AND Interrupt
+Effect.fail("error").pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+// Effect.option only catches Fail — Die/Interrupt propagate
+Effect.option(Effect.fail("error"));
+```
+
+**Source:** `@effect/vitest` README — testing patterns:
+
+```typescript
+// Recommended: Effect.either (infallible, preserves error)
+it.effect("test failure path", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.either(divide(4, 0));
+    expect(result).toStrictEqual(Either.left("Cannot divide by zero"));
+  }),
+);
+
+// Recommended: Effect.exit (full Cause inspection)
+it.effect("test failure as Exit", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(divide(4, 0));
+    expect(result).toStrictEqual(Exit.fail("Cannot divide by zero"));
+  }),
+);
+```
+
+**Source:** `packages/vitest/src/internal/internal.ts` — `it.effect` runtime (lines ~40-60):
+
+```typescript
+const runPromise =
+  (ctx?: Vitest.TestContext) =>
+  <E, A>(effect: Effect.Effect<A, E>) =>
+    Effect.gen(function* () {
+      const exitFiber = yield* Effect.fork(Effect.exit(effect));
+      // ...
+      const exit = yield* Fiber.join(exitFiber);
+      if (Exit.isSuccess(exit)) {
+        return () => exit.value;
+      } else {
+        const errors = Cause.prettyErrors(exit.cause);
+        for (let i = 1; i < errors.length; i++) {
+          yield* Effect.logError(errors[i]);
+        }
+        return () => {
+          throw errors[0];
+        };
+      }
+    });
+```
+
+This confirms `it.effect` already converts Effect failures into test failures. **No `catchAll` wrapper is needed for tests — you're actively hiding errors that `it.effect` would otherwise surface beautifully.**
+
+### Confidence: HIGH (definitive — from official docs and source)
+
+### Gap: None — this is well-documented. The migration path is clear.
+
+---
+
+## 5. TestContext / TestClock — @effect/vitest Isolation Guarantees
+
+`it.effect` automatically provides a **`TestContext` layer** composed of `TestClock`, `TestAnnotations`, `TestSized`, `TestConfig`, and `TestLive`. This is a **per-test** layer — each `it.effect` call gets a fresh context, meaning `TestClock` starts at 0, annotations are empty, etc. However, **application layers provided via `.pipe(Effect.provide(myLayer))` are NOT automatically refreshed** — isolation depends on providing fresh layers per test. `it.layer()` creates a **suite-scoped** layer (shared across tests in the describe block).
+
+**Source:** `packages/vitest/src/internal/internal.ts`:
+
+```typescript
+// TestEnv is composed ONCE but provided per-test
+const TestEnv = TestEnvironment.TestContext.pipe(
+  Layer.provide(Logger.remove(Logger.defaultLogger)),
+);
+```
+
+**Source:** `packages/effect/src/TestContext.ts`:
+
+```typescript
+export const TestContext: Layer.Layer<TestServices.TestServices> = layer.provideMerge(
+  live,
+  LiveContext,
+);
+
+// live composes:
+export const live = pipe(
+  TestServices.annotationsLayer(),
+  layer.merge(TestServices.liveLayer()),
+  layer.merge(TestServices.sizedLayer(100)),
+  layer.merge(
+    pipe(
+      TestClock.defaultTestClock,
+      layer.provideMerge(layer.merge(TestServices.liveLayer(), TestServices.annotationsLayer())),
+    ),
+  ),
+  layer.merge(
+    TestServices.testConfigLayer({ repeats: 100, retries: 100, samples: 200, shrinks: 1000 }),
+  ),
+);
+```
+
+**Key insight:** `TestContext` is a `Layer` that creates fresh `Ref`s for annotations, clock time, etc. each time it's constructed. Each `it.effect` call effectively gets fresh test services because `Effect.provide` creates a new memo map per call.
+
+### What isolation does `it.effect` guarantee?
+
+| Isolation aspect           | Guaranteed? | Mechanism                                                   |
+| -------------------------- | ----------- | ----------------------------------------------------------- |
+| `TestClock` starts at 0    | ✅ Yes      | Fresh per test via `TestContext` layer                      |
+| Test annotations isolated  | ✅ Yes      | Fresh `TestAnnotationMap` Ref per context                   |
+| Logger suppressed          | ✅ Yes      | `Logger.remove(Logger.defaultLogger)`                       |
+| Custom app layers          | ❌ No       | You must provide fresh layers per test or use `Layer.fresh` |
+| `SoulSpecLoader` singleton | ❌ No       | Not provided by `TestContext` — you must manage this        |
+
+### Confidence: HIGH
+
+---
+
+## 6. Vitest Isolation Primitives and Effect Singleton Interaction
+
+Vitest provides process/module-level isolation via `--isolate` (default: true), `pool` (forks/threads), `fileParallelism`, and `singleFork`. These isolate at the **module/process level**, NOT at the Effect layer level. Effect's singleton services (via `Layer` memoization, `Effect.Service`, `globalValue`) can still share state across tests within the same process/worker regardless of vitest's isolation settings. To isolate Effect services, you must use `Layer.fresh` or provide per-test layers.
+
+**Source:** Vitest Config — `isolate` (`vitest.dev/config/isolate`):
+
+> - Type: `boolean`
+> - Default: `true`
+> - CLI: `--no-isolate`, `--isolate=false`
+>   Run tests in an isolated environment. This option has no effect on `vmThreads` and `vmForks` pools.
+
+**Source:** Vitest Config — `pool` (`vitest.dev/config/pool.html`):
+
+> - Type: `'threads' | 'forks' | 'vmThreads' | 'vmForks'`
+> - Default: `'forks'`
+
+### How this affects Effect singletons
+
+Effect's singleton mechanism (`Layer` memoization, `globalValue`, `Effect.Service`) operates **within a single JavaScript runtime** (process). When vitest uses forks pool:
+
+- Each fork is a separate Node.js process → Effect singletons are **isolated per fork**
+- Within a single fork, all tests **share** Effect singletons by default
+
+| Vitest setting            | Process/worker         | Effect singleton isolation           |
+| ------------------------- | ---------------------- | ------------------------------------ |
+| `--isolate` (default)     | Per-file reinit        | Module state refreshed per file      |
+| `pool: 'forks'` (default) | Per-file or per-worker | Singletons reset per fork            |
+| `pool: 'threads'`         | Worker threads         | Singletons reset per thread          |
+| `singleFork: true`        | Single process         | **No isolation** — singletons shared |
+| `fileParallelism: true`   | Multiple concurrent    | Concurrent access to singletons      |
+| `--no-isolate`            | No environment refresh | **No isolation** — singletons shared |
+
+**Critical for pi-soul-agent:** With `SoulSpecLoader.Default` as an `Effect.Service` singleton containing a `Ref<Map>`, running tests in the same fork means the `Ref<Map>` is **shared across tests** — data from test 1 persists to test 2. This is the root cause of test fragility.
+
+### Fix strategies (in priority order)
+
+1. **Per-test `Layer.fresh`** (recommended, works regardless of vitest pool)
+2. **`--pool=forks --fileParallelism=false`** (isolates files but not tests within a file)
+3. **`poolOptions.forks.singleFork`** (worst — all tests share one process)
+
+### Confidence: HIGH
+
+---
+
+## 7. Recent Effect-TS Blog Posts / Docs / Changelogs (2025-2026)
+
+Several official resources now cover testing patterns:
+
+1. **Effect 3.17 (July 2025):** `Layer.mock` backported from `effect-smol` for partial service mocking.
+2. **Effect Solutions — Services & Layers (2025):** Comprehensive guide with `it.layer`, per-test layering, `Layer.mock`.
+3. **`@effect/vitest` README:** Full documentation of `it.effect`, `it.live`, `it.scoped`, `it.flakyTest`, TestClock.
+4. **Effect Testing Strategies (mintlify, 2025-2026):** Dedicated guide covering TestClock, `Effect.either`, `Effect.exit`, service testing.
+5. **PR #4254 (Jan 2025):** Ensured `it.layer` merges with `TestEnv` (TestClock available in layered tests).
+6. **PR #5151 (July 2025):** Backport of `Layer.mock` from `effect-smol` into main Effect.
+
+**Source:** Effect 3.17 Release Blog Post (`effect.website/blog/releases/effect/317/`):
+
+> `Layer.mock` creates a mock layer for testing purposes. You can provide a partial implementation of the service, and any methods not provided will throw an `UnimplementedError` defect when called.
+
+**Source:** Testing Strategies Guide (mintlify, `mintlify.com/Effect-TS/effect/guides/best-practices/testing-strategies`):
+
+> - "Use `it.effect` for testing Effect programs."
+> - "Never use `Effect.runSync` or `Effect.runPromise` inside tests."
+> - "Control time in tests for scheduling and timeouts."
+> - "Creating Test Layers" — shows mock implementations with `Layer.sync`
+
+**Source:** PR #4254 (`github.com/Effect-TS/effect/pull/4254`, Jan 2025):
+
+> "ensure vitest .layer api uses TestServices for provided layer"
+> State: merged by @tim-smart
+
+**Source:** PR #5151 (`github.com/Effect-TS/effect/pull/5151`, July 2025):
+
+> "feat: backport Layer.mock from effect-smol"
+> By @FedericoBiccheddu
+
+---
+
+## Summary: Recommendations for pi-soul-agent
+
+| Issue                                                        | Solution                                                                                               | Priority            |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------- |
+| `SoulSpecLoader.Default` singleton cache shared across tests | `Layer.fresh(SoulSpecLoader.Default)` per test                                                         | **P0 — root cause** |
+| Hardcoded file paths to real souls                           | `FileSystem.layerNoop` with `exists`/`readFileString` overrides, or `effect-memfs`                     | **P0**              |
+| `Effect.catchAll(() => Effect.succeed(null))` anti-pattern   | Replace with `Effect.either`, `Effect.flip`, or remove entirely (let `it.effect` surface errors)       | **P0 — TP-007**     |
+| No test fixtures                                             | `it.layer()` with `Layer.fresh(Loader.Default)` + `FileSystem.layerNoop` providing fixture files       | **P1**              |
+| No vitest setup                                              | Add `@effect/vitest`, use `it.effect` exclusively (no manual `.pipe(Effect.runPromise)`)               | **P1**              |
+| `Effect.option` as alternative                               | Prefer over `catchAll(null)` but better to use `Effect.either`/`Effect.flip` when error details matter | **P2**              |
+
+### Gaps
+
+1. **`Layer.fresh` + `Effect.Service` specific example:** No source was found that explicitly demonstrates `Layer.fresh(Service.Default)` where `Service.Default` is an `Effect.Service` with `dependencies: []`. The assumption is it works identically to `Layer.fresh` on any `Layer`, but this should be verified with a small test.
+
+2. **`effect-memfs` maturity:** Community package, not on npm, requires manual install. Not tested against latest Effect versions. `FileSystem.layerNoop` is the safer choice.
+
+3. **TestContext freshness proof:** While the source code strongly implies each `it.effect` gets fresh `TestServices` (via `Effect.provide` creating a new memo map per call), there's no explicit test in Effect's suite that verifies `Ref` isolation across `it.effect` calls. A small verification test would be prudent.
+
+4. **Effect 3.19+ `Effect.Service` + `Layer.mock` compatibility:** Issue #5833 (Nov 2025) documents `Layer.mock` incompatibility with `Effect.Service` due to `_tag` requirement. This is labeled "working as intended" but would affect trying to `Layer.mock(SoulSpecLoader, ...)` — you'd need to include `_tag: "SoulSpecLoader"`.
+
+### Sources Cited
+
+- **Layer Memoization — Effect Docs** (`effect.website/docs/requirements-management/layer-memoization/`)
+- **Services & Layers — Effect Solutions** (`www.effect.solutions/services-and-layers`)
+- **`@effect/vitest` README** (`github.com/Effect-TS/effect/blob/main/packages/vitest/README.md`)
+- **vitest internal.ts** (`packages/vitest/src/internal/internal.ts` at 82996bce)
+- **TestContext.ts** (`packages/effect/src/TestContext.ts`)
+- **FileSystem — Effect Docs** (`effect.website/docs/platform/file-system/#mocking-the-file-system`)
+- **FileSystem API — mintlify** (`effect-ts-effect-smol-1.mintlify.app/api/filesystem`)
+- **Effect 3.17 Release** (`effect.website/blog/releases/effect/317/`)
+- **PR #4254** (`github.com/Effect-TS/effect/pull/4254`)
+- **PR #5151** (`github.com/Effect-TS/effect/pull/5151`)
+- **Layer.mock Issue #5833** (`github.com/Effect-TS/effect/issues/5833`)
+- **effect-memfs** (`github.com/nounder/effect-memfs`)
+- **Expected Errors — Effect Docs** (`effect.website/docs/guides/error-management/expected-errors`)
+- **Testing Strategies — mintlify** (`mintlify.com/Effect-TS/effect/guides/best-practices/testing-strategies`)
+- **Vitest Config — isolate/pool** (`vitest.dev/config/isolate`, `vitest.dev/config/pool.html`)
+
+===== FILE: docs/TP-008/02-scout-codebase-inventory.md =====
+# Code Context — Test Frailty Inventory
+
+**Generated:** 2026-05-15
+**Project:** `/Users/pc/Developer/projects/pi-soul-agent/`
+**Agent:** scout (e3e92408)
+**Test files:** 2 files (37 `it.effect`/`it` tests across `loader.test.ts` and `soul-fs.test.ts`)
+
+---
+
+## Category 1: Singleton / Shared State
+
+### Finding 1.1: `SoulSpecLoader.Default` is a shared singleton across all 8 tests in `loader.test.ts`
+
+All 8 tests use `Effect.provide(SoulSpecLoader.Default)` (lines 19, 34, 48, 62, 77, 124, 138 in `loader.test.ts`). `SoulSpecLoader` (defined in `src/loader.ts:59-386`) is an `Effect.Service` wrapping a `Ref<Map<string, CacheEntry>>` (line 63). Since `Effect.Service` creates a single shared instance, **the cache is shared across all tests in the file**.
+
+- **Severity: HIGH** — causes ordering dependency (see Category 3)
+- **File:** `tests/services/loader.test.ts` (all tests)
+- **Known/New:** Known — documented in TP-007/05-context-builder.md (risk #1)
+
+### Finding 1.2: No cache reset mechanism exists
+
+There is no `beforeEach`/`afterEach` that clears the `Ref<Map<>>`. The cache is never reset between tests.
+
+- **Severity: HIGH** — amplifies the shared singleton problem
+- **File:** `tests/services/loader.test.ts`
+- **Known/New:** New discovery
+
+### Finding 1.3: `ActiveSoulPersistence` is also an `Effect.Service` singleton
+
+`src/persistence.ts:11-104` defines `ActiveSoulPersistence` as `Effect.Service` with no tests. If tests are added, they will face the same singleton issue.
+
+- **Severity: LOW** (no tests exist yet)
+- **File:** `src/persistence.ts`
+- **Known/New:** New
+
+### Finding 1.4: `os.homedir()` called directly in `expandHome` (non-mocked)
+
+`src/services/soul-fs.ts:43` calls `resolveOsHomeDir(process.env)` inside an Effect. This reads the real `process.env` at runtime, making it impossible to test `expandHome` in isolation without mutating `process.env` globally.
+
+- **Severity: MEDIUM**
+- **File:** `src/services/soul-fs.ts:43`
+- **Known/New:** New
+
+---
+
+## Category 2: Environment Coupling
+
+### Finding 2.1: `process.env.HOME` mutated in `soul-fs.test.ts` — env mutation side effects
+
+**File:** `tests/services/soul-fs.test.ts`, lines 12-47 and 55-97
+
+Two `describe` blocks independently capture `ORIGINAL_HOME`, mutate `process.env.HOME`, and rely on `afterEach` to restore it. The `expandHome` tests (lines 75-88) also mutate `process.env.HOME` inside the test body (lines 76, 84) **outside the Effect context** — this is synchronous mutation before returning the Effect.
+
+```typescript
+// Line 75-81 — env mutation BEFORE the Effect is created:
+process.env.HOME = "/home/testuser";
+return Effect.gen(function* () {
+  const result = yield* expandHome("~/projects").pipe(Effect.provide(NodePathLayer));
+  expect(result).toBe("/home/testuser/projects");
+});
+```
+
+- **Severity: HIGH** — under parallel execution, env mutations race between `resolveOsHomeDir` and `expandHome` test blocks
+- **Known/New:** New
+
+### Finding 2.2: Tests depend on souls existing on the real filesystem
+
+**File:** `tests/services/loader.test.ts`
+
+- `"bodhisattva-coder"` referenced 8 times across tests 1, 2, 4, 8
+- All tests use `NodeFileSystemLayer` and `NodePathLayer` — real filesystem I/O
+- Soul must exist in any of the 4 hardcoded search paths from `src/loader.ts:9-14`
+- No test fixtures exist; no mock FileSystem layer exists
+
+- **Severity: HIGH** — tests fail on any machine without `bodhisattva-coder` installed
+- **Known/New:** Known — documented in TP-007/05-context-builder.md (risk #2)
+
+### Finding 2.3: `expandHome` in `soul-fs.test.ts:91-96` depends on real OS `~other/path` resolution
+
+The test at line 91-96 asserts that `~other/path` is returned unchanged. This depends on the `Path` service from `@effect/platform-node` which resolves relative to the real filesystem.
+
+- **Severity: LOW** — likely portable but not isolated
+- **Known/New:** New
+
+### Finding 2.4: Hardcoded `~/.pi/agent/.active-soul.json` path in persistence
+
+`src/persistence.ts:9` defines `ACTIVE_SOUL_PATH = "~/.pi/agent/.active-soul.json"`. No tests exist yet, but any future tests would need this soul path on disk.
+
+- **Severity: LOW** (no tests yet)
+- **Known/New:** New
+
+### Finding 2.5: `os.homedir()` fallback in tests makes assertion fragile
+
+`tests/services/soul-fs.test.ts:40`: `expect(resolveOsHomeDir(process.env)).toBe(os.homedir())` — this test passes only if neither `HOME` nor `USERPROFILE` is set, and the result must match the real `os.homedir()`.
+
+- **Severity: LOW**
+- **Known/New:** New
+
+---
+
+## Category 3: Test Ordering Dependencies
+
+### Finding 3.1: Test 3 (`listSouls returns []`) MUST run first
+
+**File:** `tests/services/loader.test.ts`, lines 40-52
+
+```typescript
+it.effect("listSouls returns [] on empty cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const souls = yield* loader.listSouls(1);
+    expect(Array.isArray(souls)).toBe(true);
+    expect(souls.length).toBe(0);
+  }).pipe(
+    Effect.provide(SoulSpecLoader.Default),
+    Effect.provide(NodeFileSystemLayer),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+This test calls `listSouls` which returns cached entries (line 370-377 in `src/loader.ts`). Since the cache is a shared singleton (`SoulSpecLoader.Default`), Test 3 asserts `souls.length === 0` only if no previous test has populated the cache. It currently passes because tests execute in source order and Test 3 is the first `it.effect` block that provides `SoulSpecLoader.Default`. If another test runs first (e.g., Tests 1, 2, 4, 5, 7, or 8), they populate the cache with "bodhisattva-coder", and Test 3 will **fail**.
+
+- **Severity: HIGH** — silent false negative if test order changes
+- **Known/New:** Known — documented in TP-007/05-context-builder.md (risk #1)
+
+### Finding 3.2: All tests share implicit state via the singleton cache
+
+Tests 1, 2, 4, 8 all load "bodhisattva-coder" into the shared cache. Each test's expected behavior assumes a fresh cache. If a test runs after another that cached at level 3, test semantics shift subtly because `filterByLevel` is applied on read.
+
+- **Severity: MEDIUM** — works but non-idiomatic; tests cannot be reordered without analysis
+- **Known/New:** New (nuance not captured in prior docs)
+
+---
+
+## Category 4: Missing Test Infrastructure
+
+### Finding 4.1: No vitest config, no setup file, no global test configuration
+
+**File:** `vite.config.ts` (the only config file) — no `test:` section exists.
+
+- **Severity: MEDIUM** — no ability to configure test parallelization, globals, setup/teardown, coverage, or environment
+- **Known/New:** Known (TP-007/02-scout-codebase-inventory.md)
+
+### Finding 4.2: No shared test layers
+
+Each test in `loader.test.ts` repeats the same 3 `.provide()` calls inline:
+
+```
+Effect.provide(SoulSpecLoader.Default),
+Effect.provide(NodeFileSystemLayer),
+Effect.provide(NodePathLayer),
+```
+
+7 repetitions across the file.
+
+- **Severity: LOW** — DRY violation, but not a correctness issue
+- **Known/New:** Known
+
+### Finding 4.3: No mock layers for FileSystem or Path
+
+All tests use real filesystem I/O. There is no `Layer` that wraps an in-memory `FileSystem` for testing.
+
+- **Severity: HIGH** — prevents isolated testing, causes environment coupling
+- **Known/New:** New
+
+### Finding 4.4: No test fixtures for soul manifests
+
+No test fixture directory with `soul.json` files exists. No helper to create in-memory manifests.
+
+- **Severity: HIGH** — all soul-dependent tests require real souls on disk
+- **Known/New:** New
+
+### Finding 4.5: No test utility/helper functions
+
+No shared helpers for: creating isolated `SoulSpecLoader` instances, creating `SoulManifest` test data, setting up test FileSystem layers, common assertion patterns.
+
+- **Severity: MEDIUM** — increases boilerplate and inconsistency
+- **Known/New:** Known (TP-007/02-scout-codebase-inventory.md §9 mentions)
+
+### Finding 4.6: `@effect/vitest/utils` not used
+
+The `assertLeft`, `assertRight`, `assertFailure`, `assertSuccess` helpers from `@effect/vitest` are not imported.
+
+- **Severity: LOW** — quality-of-life improvement opportunity
+- **Known/New:** New
+
+### Finding 4.7: No `Layer.fresh` or per-test cache isolation
+
+`Effect.Service` creates a singleton by default. There's no mechanism to create a fresh `SoulSpecLoader` instance per test.
+
+- **Severity: MEDIUM** — foundational to fixing the singleton issue
+- **Known/New:** Known (TP-007/05-context-builder.md mentions Layer.fresh)
+
+---
+
+## Category 5: Error Handling Frailty
+
+### Finding 5.1: 8 `catchAll(() => Effect.succeed(null))` in loader tests (KNOWN)
+
+Count matches prior TP-007 inventory exactly. All in `loader.test.ts`:
+
+| Line | Test                          | Pattern                         |
+| ---- | ----------------------------- | ------------------------------- |
+| 15   | Test 1: `getSoul` first call  | `catchAll(() => succeed(null))` |
+| 21   | Test 1: `getSoul` second call | `catchAll(() => succeed(null))` |
+| 37   | Test 2: `loadSoul(3)`         | `catchAll(() => succeed(null))` |
+| 40   | Test 2: `loadSoul(1)`         | `catchAll(() => succeed(null))` |
+| 43   | Test 2: `getSoul(3)`          | `catchAll(() => succeed(null))` |
+| 73   | Test 4: `loadSoul(1)`         | `catchAll(() => succeed(null))` |
+| 155  | Test 8: `loadSoul(1)`         | `catchAll(() => succeed(null))` |
+| 158  | Test 8: `getSoul(1)`          | `catchAll(() => succeed(null))` |
+
+- **Severity: HIGH**
+- **Known/New:** Known — TP-007 inventory counts 8 instances
+
+### Finding 5.2: 1 `catchAll(() => Effect.succeed([]))` in loader tests (KNOWN)
+
+`loader.test.ts` line 90 (Test 5). If `loadAllSouls` fails, returns `[]`, then `result.length > 0` fails with "expected 0 to be greater than 0".
+
+- **Severity: MEDIUM**
+- **Known/New:** Known — TP-007 inventory counts 1 instance
+
+### Finding 5.3: 4 `expect(x).not.toBeNull()` assertions mask error info
+
+`loader.test.ts` lines 16, 22, 44, 74. These null-checks provide zero diagnostic info on failure.
+
+- **Severity: MEDIUM**
+- **Known/New:** Known — TP-007 inventory
+
+### Finding 5.4: `soul-fs.test.ts` has no `catchAll` usage
+
+The `soul-fs.test.ts` tests are all pure-function tests or infallible Effect tests.
+
+- **Severity: NONE**
+- **Known/New:** N/A
+
+### Finding 5.5: Test 7 is the only correct error-handling pattern
+
+`loader.test.ts` lines 117-128 uses `Effect.flip` correctly — the only test using an idiomatic error-path pattern.
+
+- **Severity: NONE** (positive finding)
+- **Known/New:** Known
+
+---
+
+## Category 6: Missing Error Path Coverage
+
+### Finding 6.1: Only `SoulLoadError._tag` is tested — and only the `_tag` field
+
+Test 7 (`loader.test.ts:117-128`) asserts `result._tag === "SoulLoadError"` and `typeof result.message === "string"`. Does NOT test: exact error message content, `soulName` field, `offers` field, `cause` field.
+
+- **Severity: MEDIUM** — minimal coverage
+- **Known/New:** New
+
+### Finding 6.2: `SoulNotFoundError` has zero test coverage
+
+This internal error is thrown by `resolveSoulPath` when a soul isn't found. Its message format and `soulPath` field are never tested.
+
+- **Severity: MEDIUM** — the error that users will most commonly encounter
+- **Known/New:** New
+
+### Finding 6.3: `NoSoulsFoundError` has zero test coverage
+
+Thrown by `getAllSoulsInternal` when no manifests are found. No test validates this error path.
+
+- **Severity: LOW** — edge case; hard to trigger without removing all souls
+- **Known/New:** New
+
+### Finding 6.4: `ManifestParseError` has zero test coverage
+
+Thrown by `readJsonFile` in `soul-fs.ts:218-219` when JSON parsing fails. No test validates this error's shape, `path` field, or `cause` propagation.
+
+- **Severity: MEDIUM** — important error for malformed manifests
+- **Known/New:** New
+
+### Finding 6.5: `FileSystemError` has zero test coverage
+
+Thrown by `readJsonFile` (line 228) and `readTextFile` (line 244) in `soul-fs.ts`, and by `ActiveSoulPersistence.save/clear` in `persistence.ts:41-49, 89-97`.
+
+- **Severity: MEDIUM** — important for disk I/O failures
+- **Known/New:** New
+
+### Finding 6.6: Error remapping correctness untested
+
+In `src/loader.ts:217-236`, `loadSoul` remaps 4 internal error types (`SoulNotFoundError`, `NoSoulsFoundError`, `ManifestParseError`, `FileSystemError`) into `SoulLoadError`. No test verifies that each internal error produces the correct `SoulLoadError.message` format, the `cause` is propagated correctly, or the error message contains the soul name.
+
+- **Severity: HIGH** — error contract is undocumented and untested
+- **Known/New:** New
+
+### Finding 6.7: `getSoul` error path never tested
+
+`getSoul` (lines 344-363 in loader.ts) has a complex error path: it calls `resolveSoulPath` with a `catchAll` fallback to `null` (line 348), then falls through to `loadSoul`. This cascading error behavior is untested.
+
+- **Severity: MEDIUM** — complex error logic with no coverage
+- **Known/New:** New
+
+### Finding 6.8: `loadAllSouls` error path never tested
+
+`loadAllSouls` (lines 263-335 in loader.ts) has multiple catch handlers:
+
+- `Effect.catchAll` per-soul (line 286) — logs and returns null
+- `Effect.catchAllCause` per-soul (line 292) — logs and returns null
+- `Effect.catchAllCause` entire operation (line 317) — converts to SoulLoadError
+
+None of these paths are tested.
+
+- **Severity: HIGH** — complex error handling with zero coverage
+- **Known/New:** New
+
+### Finding 6.9: `resolveSoulPath` error path never tested
+
+`resolveSoulPath` (loader.ts:69-103) has a multi-step resolution: direct path check, path with soul.json, search paths iteration, fuzzy matching, then `SoulNotFoundError` fallthrough. Only the last step is tested (Test 7).
+
+- **Severity: HIGH** — most complex resolution logic with minimal coverage
+- **Known/New:** New
+
+### Finding 6.10: No error message assertion testing
+
+No test in the suite asserts on exact error message strings. Only Test 7 checks `typeof result.message === "string"`.
+
+- **Severity: LOW** — messages are stable strings, less likely to break than data shapes
+- **Known/New:** New
+
+---
+
+## Category 7: Concurrency / Parallelism Risks
+
+### Finding 7.1: Shared singleton cache fails under parallel execution
+
+Because `SoulSpecLoader.Default` is a singleton, if tests within the file are parallelized or this file runs concurrently with other files that use the same singleton, the shared `Ref<Map<>>` would cause races. Test 3 expects empty cache but another test already populated it; Test 2's upgrade-only policy depends on seeing specific cache state.
+
+- **Severity: HIGH** — breaks with standard parallel test configuration
+- **Known/New:** New
+
+### Finding 7.2: `process.env.HOME` mutation races under parallel test file execution
+
+`tests/services/soul-fs.test.ts` mutates `process.env.HOME` globally. If this file runs in parallel with any other test that reads `process.env.HOME`, the mutations will race.
+
+- **Severity: HIGH** — classic parallel test race condition
+- **Known/New:** New
+
+### Finding 7.3: `expandHome` test 3 (line 75) leaves HOME mutated if test fails early
+
+```typescript
+process.env.HOME = "/home/testuser";  // line 76
+return Effect.gen(function* () { ... });
+```
+
+If the `afterEach` doesn't run (e.g., early exit or synchronous rejection), `process.env.HOME` remains as `/home/testuser`.
+
+- **Severity: MEDIUM** — possible state leak on error
+- **Known/New:** New
+
+### Finding 7.4: No test isolation boundaries
+
+No `vitest.config.ts` settings for `pool`, `poolOptions`, `fileParallelism`, or `sequence` to control test execution order. No test-level isolation via `beforeEach`/`afterEach` for the cache or env vars beyond the soul-fs.ts `afterEach`.
+
+- **Severity: MEDIUM** — no guardrails against parallel failure
+- **Known/New:** New
+
+---
+
+## Summary Tables
+
+### Frailty Count by Category
+
+| Category                           | HIGH   | MEDIUM | LOW   | Total  |
+| ---------------------------------- | ------ | ------ | ----- | ------ |
+| 1. Singleton / Shared State        | 2      | 1      | 1     | 4      |
+| 2. Environment Coupling            | 2      | 1      | 2     | 5      |
+| 3. Test Ordering Dependencies      | 1      | 1      | 0     | 2      |
+| 4. Missing Test Infrastructure     | 2      | 2      | 2     | 6      |
+| 5. Error Handling Frailty          | 1      | 2      | 0     | 3      |
+| 6. Missing Error Path Coverage     | 3      | 4      | 1     | 8      |
+| 7. Concurrency / Parallelism Risks | 2      | 1      | 0     | 3      |
+| **Total**                          | **13** | **12** | **6** | **31** |
+
+### Known vs New Findings
+
+| Status               | Count  |
+| -------------------- | ------ |
+| Known (TP-007 docs)  | 7      |
+| New (this inventory) | 24     |
+| **Total**            | **31** |
+
+### Files That Need Changes (Highest Priority)
+
+| File                             | Lines                            | Issue                                                   |
+| -------------------------------- | -------------------------------- | ------------------------------------------------------- |
+| `tests/services/loader.test.ts`  | 15, 21, 37, 40, 43, 73, 155, 158 | 8 `catchAll(null)` anti-patterns (TP-007 scope)         |
+| `tests/services/loader.test.ts`  | 90                               | 1 `catchAll([])` anti-pattern (TP-007 scope)            |
+| `tests/services/loader.test.ts`  | 40-52 (Test 3)                   | Ordering dependency on shared singleton cache           |
+| `tests/services/soul-fs.test.ts` | 75-88                            | Env mutation outside Effect context, race-prone         |
+| `tests/services/soul-fs.test.ts` | 12-17, 55-59                     | Env mutation restore patterns fragile under parallel    |
+| — (new)                          | —                                | Need mock FileSystem + Path layers for isolated testing |
+| — (new)                          | —                                | Need test fixtures for soul manifests                   |
+| — (new)                          | —                                | Need vitest config with pool/sequence settings          |
+
+### Entry Points for Remediation
+
+1. **Start with TP-007 scope** — Remove the 8 `catchAll(null)` + 1 `catchAll([])` from `loader.test.ts`.
+2. **Then: Isolate the singleton cache** — Create per-test `SoulSpecLoader` instances or add `afterEach` cache clearing.
+3. **Then: Mock the filesystem** — Use `FileSystem.layerNoop` from `@effect/platform` to eliminate environment coupling.
+4. **Then: Add error path coverage** — Add tests for `SoulNotFoundError`, `NoSoulsFoundError`, `ManifestParseError`, `FileSystemError`, and the error remapping in `loadSoul`.
+
+===== FILE: docs/TP-008/03-researcher-tradeoffs.md =====
+# Research: Practical Tradeoffs for Effect-TS Test Frailty Mitigation
+
+**Date:** 2026-05-15
+**Context:** pi-soul-agent using Effect-TS v3.21+, @effect/vitest v0.29+, @effect/platform-node
+**Agent:** researcher (2ef2ecbe)
+**Tests analyzed:** `tests/services/loader.test.ts` (143 lines), `tests/services/soul-fs.test.ts` (97 lines)
+**Source analyzed:** `src/loader.ts`, `src/services/soul-fs.ts`, `src/errors.ts`
+
+---
+
+## Issue A: Singleton Cache (`SoulSpecLoader.Default`) — Shared `Ref<Map>` Across Tests
+
+**Problem:** `SoulSpecLoader` is an `Effect.Service` (implicit singleton). The `cache: Ref<Map>` is created once when the layer is first built and shared across all tests via `Effect.provide(SoulSpecLoader.Default)`. Test 3 (`listSouls returns []`) breaks if tests run in different order because earlier tests populate the cache.
+
+### Options Comparison
+
+| Approach                                                                         | Code Change                                                     | Risk                                                           | Confidence | Key Tradeoff                                                                             | Recommended?             |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------- | ------------------------ |
+| **1. `Layer.fresh`** — wrap `SoulSpecLoader.Default` in `Layer.fresh()` per test | ~3 chars per test (`Layer.fresh(...)`)                          | **Low** — no production changes, pure composition change       | ⭐⭐⭐⭐⭐ | Most idiomatic Effect-TS; creates a new cache instance per test; zero production changes | **✅ YES — Recommended** |
+| **2. `Layer.scoped`** — wrap layer in scope for per-test lifecycle               | Moderate — requires restructuring Service to be scoped          | **Medium** — changes production code interface                 | ⭐⭐⭐     | Overkill — service has no resource acquisition/release                                   | No                       |
+| **3. Cache reset method** — expose `resetCache()` on service                     | Small: ~3 lines in Service + 1 line in `beforeEach`/`afterEach` | **Low** — but adds production API surface that shouldn't exist | ⭐⭐⭐     | Works with singleton but adds production API for testing                                 | No                       |
+| **4. `Ref.set(cache, new Map())` in afterEach**                                  | ~4 lines in test file                                           | **Low** — no production changes                                | ⭐⭐⭐     | Hacky; race condition risk if tests ever parallelize                                     | Weak no                  |
+| **5. `Layer.build` + `Effect.provide`** — build fresh layer per test             | Moderate                                                        | **Low**                                                        | ⭐⭐⭐⭐   | Complete isolation but more boilerplate than `Layer.fresh`                               | No                       |
+
+### Winner: `Layer.fresh`
+
+**Why:** `Layer.fresh` is the idiomatic Effect-TS mechanism for disabling layer memoization (see [Layer Memoization docs](https://effect.website/docs/requirements-management/layer-memoization/)). It creates a fresh, non-shared version of the layer every time it's provided. No production code changes. Minimal test code change.
+
+```typescript
+// BEFORE — shared singleton (Test 3 sees cache from Tests 1, 2)
+it.effect("listSouls returns [] on empty cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const souls = yield* loader.listSouls(1);
+    expect(souls.length).toBe(0);
+  }).pipe(
+    Effect.provide(SoulSpecLoader.Default), // shared singleton
+    Effect.provide(NodeFileSystemLayer),
+    Effect.provide(NodePathLayer),
+  ),
+);
+
+// AFTER — fresh layer per test (complete isolation)
+it.effect("listSouls returns [] on empty cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const souls = yield* loader.listSouls(1);
+    expect(souls.length).toBe(0);
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)), // fresh each time
+    Effect.provide(NodeFileSystemLayer),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+**Key insight:** `Layer.fresh` wraps an existing layer and returns a new layer that is NOT memoized. Each `Effect.provide(Layer.fresh(...))` call creates a fresh cache instance. The `Ref<Map>` is re-created from scratch.
+
+### Risk Analysis for Issue A
+
+| Risk                                                                                                                                      | Mitigation                                                 |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| If `Layer.fresh` is applied inconsistently, cache leakage persists                                                                        | Apply universally across all tests, or use a shared helper |
+| `@effect/vitest` `it.layer` pattern shares layers globally. If future refactor adopts `it.layer`, `Layer.fresh` interaction needs testing | Stick with `Effect.provide` pattern for now                |
+| Layer memoization bypass increases allocation cost                                                                                        | Negligible — `Ref<Map>` creation is cheap, tests are ~10   |
+
+---
+
+## Issue B: Real Filesystem Coupling — "bodhisattva-coder" Must Exist on Disk
+
+**Problem:** Tests 1, 2, 4, 5, 8 (`loader.test.ts`) depend on `SoulSpecLoader.Default` backed by real `NodeFileSystemLayer`. They resolve "bodhisattva-coder" from `~/.pi/agent/souls/` or similar paths on the developer's machine. Fails on CI, other machines, or if the soul directory is missing.
+
+### Options Comparison
+
+| Approach                                                                                    | Code Change                                            | Risk                                           | Confidence | Key Tradeoff                                                                                           | Recommended?                   |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------ | ------------------------------ |
+| **1. `FileSystem.layerNoop`** (built-in mock FS)                                            | ~20-30 lines per mock setup                            | **Low** — uses existing `@effect/platform` API | ⭐⭐⭐⭐⭐ | Official, maintained, typed mock FS with `Partial<FileSystem>` override pattern; no extra dependencies | **✅ YES — Primary**           |
+| **2. Custom mock FileSystem layer**                                                         | ~80-120 lines implementing full `FileSystem` interface | **Medium** — needs to match the full interface | ⭐⭐⭐     | Total control but high maintenance; unnecessary when `FileSystem.layerNoop` exists                     | No                             |
+| **3. Test fixture directory** (check in `tests/fixtures/souls/bodhisattva-coder/soul.json`) | ~5 fixture files, 1 env setup line                     | **Low** — works with real FS layer             | ⭐⭐⭐⭐   | Best for integration/e2e tests; CI must clone fixtures                                                 | **✅ YES — Combined approach** |
+| **4. Inline fixtures via `Layer.succeed`**                                                  | ~10 lines per test                                     | **Low**                                        | ⭐⭐⭐     | Bypasses FS entirely; doesn't test FS-reading code paths                                               | Conditional                    |
+| **5. Combined approach** — mock FS for unit tests, real fixtures for integration            | ~30 lines mock setup + fixture files                   | **Low**                                        | ⭐⭐⭐⭐⭐ | Best coverage                                                                                          | **✅ YES — Recommended**       |
+
+### Winner: `FileSystem.layerNoop` (Primary) + Fixture Directory (Integration)
+
+**`FileSystem.layerNoop` from `@effect/platform` is the official testing mock.** It:
+
+- Returns `Effect.fail` (not-found) for all FS operations by default
+- Allows overriding specific methods with custom implementations
+- Is type-safe via the `Partial<FileSystem>` parameter
+- Has zero external dependencies beyond what's already installed (`@effect/platform` v0.96+)
+
+```typescript
+import { FileSystem } from "@effect/platform";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
+
+const SAMPLE_SOUL_MANIFEST = {
+  name: "bodhisattva-coder",
+  display_name: "Bodhisattva Coder",
+  version: "1.0.0",
+  spec_version: "0.5",
+  description: "A coder bodhisattva",
+  author: { name: "Test" },
+  license: "MIT",
+  tags: [],
+  category: "general",
+  compatibility: { models: [], frameworks: [] },
+  allowed_tools: [],
+  recommended_skills: [],
+  files: { soul: "SOUL.md" },
+  deprecated: false,
+  environment: "virtual",
+  interaction_mode: "text",
+  sensors: [],
+  actuators: [],
+  soul_content: "hello",
+  identity_content: "world",
+};
+
+const MockFileSystemLayer = FileSystem.layerNoop({
+  exists: (path) => Effect.succeed(path.includes("bodhisattva-coder")),
+  readFileString: (path) => {
+    if (path.includes("soul.json")) {
+      return Effect.succeed(JSON.stringify(SAMPLE_SOUL_MANIFEST));
+    }
+    if (path.includes("SOUL.md")) {
+      return Effect.succeed("# Bodhisattva Coder Soul");
+    }
+    return Effect.fail(new FileSystemError({ message: "Not found", path, cause: null }));
+  },
+  readDirectory: (path) => Effect.succeed(["bodhisattva-coder"]),
+});
+
+// In test:
+it.effect("getSoul auto-loads when soul not in cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const soul = yield* loader.getSoul("bodhisattva-coder", 1);
+    expect(soul.name).toBe("bodhisattva-coder");
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(MockFileSystemLayer), // 🎯 mock FS instead of NodeFileSystemLayer
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+### Risk Analysis for Issue B
+
+| Risk                                                                                     | Mitigation                                                             |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `layerNoop` doesn't perfectly match real FS behavior (permissions, symlinks, edge cases) | Accept for unit tests; use real FS fixtures for integration tests      |
+| Mock setup must be kept in sync with real manifest shape as SoulSpec evolves             | Use shared fixture constants; type-check against `SoulManifest`        |
+| `resolveSoulPath` searches multiple directories — mock must handle all search paths      | Override `readDirectory` and `exists` comprehensively for search paths |
+
+---
+
+## Issue C: Environment Variable Pollution
+
+**Problem:** `soul-fs.test.ts` mutates `process.env.HOME`/`process.env.USERPROFILE` with manual save/restore in `afterEach`. Unsafe if tests fail mid-execution, and `process.env` mutations are global.
+
+### Options Comparison
+
+| Approach                                                | Code Change                                                                                      | Risk                                                                          | Confidence | Key Tradeoff                                                                                 | Recommended?                 |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------- | ---------------------------- |
+| **1. `vi.stubEnv` / `vi.unstubEnv`** (Vitest built-in)  | ~2 lines: `vi.stubEnv("HOME", "/home/testuser")` + `vi.unstubEnv()` in `afterEach`               | **Low** — Vitest-managed env stubs are scoped to the test file; auto-restored | ⭐⭐⭐⭐⭐ | Simplest, safest, Vitest-native; no Effect refactoring needed                                | **✅ YES — Recommended**     |
+| **2. Effect's `Config` layer** — inject config directly | High: requires refactoring `resolveOsHomeDir` to get home from `Config` instead of `process.env` | **Medium** — production code changes                                          | ⭐⭐⭐⭐   | Most idiomatic for Effect long-term; but significant refactoring for a small testing benefit | No — overkill for this scope |
+| **3. Keep manual save/restore, extract to helper**      | ~5 lines helper                                                                                  | **Low**                                                                       | ⭐⭐       | Still racy; manual; doesn't protect against unhandled rejections                             | No                           |
+
+### Winner: `vi.stubEnv` / `vi.unstubEnv`
+
+```typescript
+import { afterEach } from "@effect/vitest";
+import { vi } from "vitest";
+
+describe("resolveOsHomeDir", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs(); // single call restores all stubbed env vars
+  });
+
+  it("returns HOME when set", () => {
+    vi.stubEnv("HOME", "/home/testuser");
+    expect(resolveOsHomeDir(process.env)).toBe("/home/testuser");
+  });
+
+  it("returns USERPROFILE when HOME is not set", () => {
+    vi.stubEnv("HOME", undefined);
+    vi.stubEnv("USERPROFILE", "/Users/testuser");
+    expect(resolveOsHomeDir(process.env)).toBe("/Users/testuser");
+  });
+
+  it("prefers HOME over USERPROFILE when both are set", () => {
+    vi.stubEnv("HOME", "/home/testuser");
+    vi.stubEnv("USERPROFILE", "/Users/testuser");
+    expect(resolveOsHomeDir(process.env)).toBe("/home/testuser");
+  });
+
+  it("falls back to os.homedir() when neither HOME nor USERPROFILE is set", () => {
+    vi.stubEnv("HOME", undefined);
+    vi.stubEnv("USERPROFILE", undefined);
+    expect(resolveOsHomeDir(process.env)).toBe(os.homedir());
+  });
+});
+```
+
+**Note:** `vi.stubEnv` works by intercepting `process.env` access at the Vitest level, not by mutating the actual environment. It is automatically scoped to the current test file and restored after each test.
+
+### Risk Analysis for Issue C
+
+| Risk                                                                                                       | Mitigation                                                                                         |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `vi.stubEnv` needs `vi` import from `vitest`, currently the test imports `afterEach` from `@effect/vitest` | Add `import { vi } from "vitest"` at top of file                                                   |
+| `expandHome` tests use imperative mutation before returning Effect                                         | Replace with `vi.stubEnv` calls before the Effect, or wrap in `Effect.sync(() => vi.stubEnv(...))` |
+
+---
+
+## Issue D: No Vitest Config / Setup File
+
+**Problem:** No `vitest.config.ts`, no `vitest.setup.ts`, no shared test utilities. Tests are self-contained but duplicate patterns across files.
+
+### Options Comparison
+
+| Approach                                                                     | Code Change                            | Risk                      | Confidence | Key Tradeoff                                                                     | Recommended?             |
+| ---------------------------------------------------------------------------- | -------------------------------------- | ------------------------- | ---------- | -------------------------------------------------------------------------------- | ------------------------ |
+| **1. Add minimal vitest config with `setupFiles`**                           | 1 file: `vitest.config.ts` (~10 lines) | **Low** — additive change | ⭐⭐⭐⭐⭐ | Enables centralized setup, global mocks, env config                              | **✅ YES — Recommended** |
+| **2. Add shared test helpers** (e.g., `createTestLayer`, `withTestFixtures`) | 1 file: `tests/helpers.ts` (~30 lines) | **Low**                   | ⭐⭐⭐⭐⭐ | Reduces per-test boilerplate; centralizes mock FS creation, Layer.fresh wrapping | **✅ YES — Recommended** |
+| **3. Add `Layer.fresh` utility** for per-test isolation                      | part of helpers file (~5 lines)        | **Low**                   | ⭐⭐⭐⭐   | Thin wrapper for ergonomics                                                      | Yes, as part of #2       |
+
+### Winner: Vitest Config + Shared Test Helpers
+
+```typescript
+// tests/helpers.ts — shared test utilities
+import { Effect, Layer } from "effect";
+import { FileSystem } from "@effect/platform";
+import { SoulSpecLoader } from "@/src/loader";
+import type { SoulManifest } from "@/src/types";
+
+/**
+ * Create a test layer with a fresh SoulSpecLoader instance.
+ * Each call creates a new cache.
+ */
+export const freshLoaderLayer = () => Layer.fresh(SoulSpecLoader.Default);
+
+/**
+ * Combine fresh loader layer with provided FS and Path layers.
+ */
+export const testLoaderLayer = (
+  fsLayer: Layer.Layer<FileSystem.FileSystem, never, never>,
+  pathLayer: Layer.Layer<never, never, never>,
+) => freshLoaderLayer().pipe(Layer.provide(fsLayer), Layer.provide(pathLayer));
+
+/**
+ * Default mock soul manifest fixture.
+ */
+export const MOCK_SOUL_MANIFEST: SoulManifest = {
+  name: "test-soul",
+  display_name: "Test Soul",
+  version: "1.0.0",
+  spec_version: "0.5",
+  description: "A test soul manifest",
+  author: { name: "Tester" },
+  license: "MIT",
+  tags: [],
+  category: "general",
+  compatibility: { models: [], frameworks: [] },
+  allowed_tools: [],
+  recommended_skills: [],
+  files: { soul: "SOUL.md" },
+  deprecated: false,
+  environment: "virtual",
+  interaction_mode: "text",
+  sensors: [],
+  actuators: [],
+};
+
+/**
+ * Create a mock FileSystem layer with default soul fixture.
+ */
+export const mockFsLayer = (overrides?: Partial<Parameters<typeof FileSystem.layerNoop>[0]>) =>
+  FileSystem.layerNoop({
+    exists: (path) => Effect.succeed(path.includes("test-soul")),
+    readFileString: (path) =>
+      path.includes("soul.json")
+        ? Effect.succeed(JSON.stringify(MOCK_SOUL_MANIFEST))
+        : Effect.fail(new Error(`File not found: ${path}`)),
+    readDirectory: (path) => Effect.succeed(["test-soul"]),
+    ...overrides,
+  });
+```
+
+### Risk Analysis for Issue D
+
+| Risk                                                                                          | Mitigation                                                                                                                                |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Vite+ overrides vitest config via `vite.config.ts` — adding `vitest.config.ts` might conflict | Extend existing `vite.config.ts` with `test` property instead of separate file; Vite+ `vp test` should pass through vitest config options |
+| Shared helpers add indirection — test readability vs. DRY balance                             | Keep helpers thin; prefer composition over abstraction                                                                                    |
+
+---
+
+## Issue E: Error Path Coverage Gaps
+
+### Current Error Coverage
+
+| Error Type           | Tagged Class           | Defined In         | Tested?        | Test                                  |
+| -------------------- | ---------------------- | ------------------ | -------------- | ------------------------------------- |
+| `SoulNotFoundError`  | `"SoulNotFoundError"`  | `src/errors.ts:8`  | **Indirectly** | Test 7 (converted to `SoulLoadError`) |
+| `NoSoulsFoundError`  | `"NoSoulsFoundError"`  | `src/errors.ts:14` | **No**         | Never directly tested                 |
+| `ManifestParseError` | `"ManifestParseError"` | `src/errors.ts:17` | **No**         | Never directly tested                 |
+| `FileSystemError`    | `"FileSystemError"`    | `src/errors.ts:24` | **No**         | Never directly tested                 |
+| `SoulLoadError`      | `"SoulLoadError"`      | `src/errors.ts:35` | **Yes**        | Test 7 (`_tag` assertion)             |
+
+### Coverage Gaps & Effort
+
+| Gap                                                      | Effort    | Priority |
+| -------------------------------------------------------- | --------- | -------- |
+| `ManifestParseError` from invalid JSON                   | ~10 lines | **P1**   |
+| `NoSoulsFoundError` from empty search paths              | ~15 lines | **P1**   |
+| `FileSystemError` from unreadable file                   | ~10 lines | P2       |
+| `filterByLevel` level 2 test                             | ~8 lines  | P2       |
+| Fuzzy name resolution                                    | ~15 lines | P3       |
+| Error remapping correctness (4 internal → SoulLoadError) | ~30 lines | P3       |
+
+### Total gap-fill effort: ~80 lines, all in `loader.test.ts` using mock FS.
+
+---
+
+## Combined Recommended Strategy
+
+### Implementation Order
+
+```
+Phase 1: Foundation (low risk, high confidence)
+├── Step 1: Add vitest config with setupFiles          (Issue D)
+├── Step 2: Extract shared test helpers                 (Issue D)
+│   ├── freshLoaderLayer(), mockFsLayer(), MOCK_SOUL_MANIFEST
+│   └── This is used by all subsequent steps
+└── Step 3: Convert soul-fs.test.ts to vi.stubEnv       (Issue C)
+
+Phase 2: Isolation (core fragility fix)
+├── Step 4: Apply Layer.fresh to all loader.test.ts tests  (Issue A)
+│   └── Changes: Wrap SoulSpecLoader.Default in Layer.fresh()
+└── Step 5: Verify Test 3 (listSouls returns []) passes
+            regardless of test ordering
+            └── Can run: `npx vitest run --reorder`
+
+Phase 3: Mock FS (CI portability)
+├── Step 6: Create mock FileSystem layer with fixtures    (Issue B)
+│   ├── Define MOCK_SOUL_MANIFEST in helpers.ts
+│   ├── Create MockFileSystemLayer via FileSystem.layerNoop
+│   └── Cover all search paths used by resolveSoulPath
+├── Step 7: Migrate loader.test.ts to mock FS layer       (Issue B)
+│   └── Replace NodeFileSystemLayer with MockFileSystemLayer
+└── Step 8: Verify tests pass without real soul directory (Issue B)
+    └── `unset HOME && npx vitest run` or similar
+
+Phase 4: Coverage (error paths)
+├── Step 9: Add ManifestParseError test                   (Issue E)
+├── Step 10: Add NoSoulsFoundError test                   (Issue E)
+├── Step 11: Add FileSystemError test                     (Issue E)
+├── Step 12: Add filterByLevel level 2 test               (Issue E)
+└── Step 13: Add fuzzy name resolution test               (Issue E)
+
+Phase 5: Polish
+├── Step 14: Remove process.env save/restore boilerplate  (cleanup)
+├── Step 15: Document test patterns in AGENTS.md          (team docs)
+└── Step 16: Add CI config to run tests on every push     (operational)
+```
+
+### Migration Cost: Total
+
+| Metric                      | Estimate                                                              |
+| --------------------------- | --------------------------------------------------------------------- |
+| **New files**               | 2 (`tests/helpers.ts`, potential `vitest.config.ts`)                  |
+| **Modified files**          | 2 (`tests/services/loader.test.ts`, `tests/services/soul-fs.test.ts`) |
+| **Lines added**             | ~150 (config + helpers + mock FS + error tests)                       |
+| **Lines removed**           | ~15 (manual env save/restore, duplicate boilerplate)                  |
+| **Production code changes** | **Zero**                                                              |
+| **Risk of test regression** | Low — all changes are test-side, replacing one layer with another     |
+| **CI confidence**           | High — tests no longer depend on developer's machine state            |
+
+### Key Open Questions
+
+1. **Does the existing `vite.config.ts` (Vite+ based) support the `test` property from vitest?** Vite+ wraps vitest; need to verify that `defineConfig` from `vitest/config` works alongside `defineConfig` from `vite-plus`. If not, a separate `vitest.config.ts` should work.
+
+2. **Will `FileSystem.layerNoop` from `@effect/platform` v0.96.0 support all required methods?** The interface includes `exists`, `readFileString`, `readDirectory`, and potentially `realPath`. Need to verify the method signatures match.
+
+3. **Do the mock FS search paths need to match the exact production search logic?** The mock must support all paths that `resolveSoulPath` and `getAllSoulsInternal` iterate over, or the test needs to know which path the code will use.
+
+### Sources Cited
+
+- **Effect Layer Memoization docs** — Official documentation of `Layer.fresh` for disabling layer sharing. [Source](https://effect.website/docs/requirements-management/layer-memoization/)
+- **`@effect/platform` FileSystem docs** — Documents `FileSystem.layerNoop` with `Partial<FileSystem>` for mocking. [Source](https://effect.website/docs/platform/file-system/)
+- **`@effect/vitest` README** — Official testing patterns from the Effect team. [Source](https://github.com/Effect-TS/effect/blob/main/packages/vitest/README.md)
+- **Effect Discord thread (#4616)** — Community discussion on per-test fresh layers; validates `Layer.fresh` as the intended mechanism. [Source](https://github.com/Effect-TS/effect/issues/4616)
+- **Effect Testing Strategies guide** — Official best practices for test layers, mocks, and fixtures. [Source](https://effect-ts-effect-smol-1.mintlify.app/guides/testing)
+- **TP-007 Oracle Audit (04-oracle-challenge.md)** — Detailed analysis of shared cache problem, Test 3 ordering dependency, and test infrastructure gaps.
+- **TP-007 Synthesis (00-synthesis.md)** — Inventory of catchAll(null) usages and test structure.
+
+===== FILE: docs/TP-008/04-handoff-plan.md =====
+# TP-008: Test Frailty Mitigation — Handoff Plan
+
+## Status: Approved for Implementation
+
+| Scope                            | Status                           |
+| -------------------------------- | -------------------------------- |
+| `tests/services/loader.test.ts`  | ✅ **Changes planned below**     |
+| `tests/services/soul-fs.test.ts` | ✅ **Changes planned below**     |
+| `tests/helpers.ts`               | ✅ **New file to create**        |
+| `vite.config.ts`                 | ✅ **Extended with test config** |
+| `src/loader.ts`                  | ❌ Out of scope (see §2)         |
+| `src/errors.ts`                  | ❌ Out of scope (see §2)         |
+| `src/persistence.ts`             | ❌ Out of scope (see §2)         |
+| `src/types.ts`                   | ❌ Out of scope (see §2)         |
+
+## Oracle Corrections Applied
+
+The following oracle challenge findings were verified and incorporated:
+
+| #   | Oracle Finding                                  | Verdict                                                                                       | Action                        |
+| --- | ----------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------- |
+| C1  | "TP-007 NOT applied yet"                        | ❌ **Incorrect** — TP-007 IS applied. Test file has no catchAll wrappers.                     | No action needed.             |
+| C2  | `Layer.fresh` + `Effect.Service` unverified     | ✅ **Valid concern**                                                                          | Add Phase 0 verification test |
+| C3  | Mock manifest field names unverified            | ✅ **Valid but confirmed correct** — SoulManifest type uses `deprecated`, `environment`, etc. | Already correct               |
+| C4  | Phase order: Mock FS before Isolation           | ✅ **Valid improvement**                                                                      | Swap Phase 2 and 3            |
+| C5  | Vite+ config compatibility untested             | ✅ **Valid**                                                                                  | Phase 0 verification step     |
+| C6  | Mock uses `includes` not exact paths            | ✅ **Valid**                                                                                  | Use exact path matching       |
+| H1  | `NoSoulsFoundError` public API test would fail  | ✅ **Valid**                                                                                  | Test via internal code path   |
+| H2  | `resolveSoulPath` search paths not fully mocked | ✅ **Valid**                                                                                  | Cover all 4 search paths      |
+| H3  | Avatar path false positive                      | ✅ **Valid**                                                                                  | Explicit path exclusion       |
+| H4  | `vi.stubEnv` in Vite+ fork untested             | ✅ **Valid**                                                                                  | Quick verification test       |
+
+**All error field names confirmed:** `SoulLoadError`, `SoulNotFoundError`, `ManifestParseError`, `FileSystemError` all use `readonly message: string` (not `msg`). ✅
+
+---
+
+## 1. Summary
+
+Eliminate all test frailty from the pi-soul-agent test suite by:
+
+1. Adding vitest config and shared test helpers (foundation)
+2. Replacing the real `NodeFileSystemLayer` with `FileSystem.layerNoop` (mock FS)
+3. Isolating the `SoulSpecLoader.Default` singleton via `Layer.fresh` per test
+4. Converting `process.env.HOME` mutations to `vi.stubEnv`
+5. Adding targeted error path coverage
+
+**Total change:** ~150 lines added, ~15 removed across 4 files (2 modified, 2 created). **Zero production code changes.** Tests become CI-portable and ordering-independent.
+
+## 2. Codebase Scope
+
+### Files that WILL be modified
+
+| File                             | Changes                                                                                                                                              |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/services/loader.test.ts`  | Add `Layer.fresh(SoulSpecLoader.Default)` to all 7 `.provide()` calls. Replace `NodeFileSystemLayer` with mock FS layer. Add 5 new error-path tests. |
+| `tests/services/soul-fs.test.ts` | Replace manual `process.env.HOME` save/restore with `vi.stubEnv`/`vi.unstubAllEnvs`.                                                                 |
+| `vite.config.ts`                 | Add `test: { ... }` section (no separate `vitest.config.ts` needed).                                                                                 |
+
+### Files that will be CREATED
+
+| File               | Purpose                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `tests/helpers.ts` | Shared test utilities: `freshLoaderLayer()`, `mockFsLayer()`, `MOCK_SOUL_MANIFEST`, `createMockFs()` |
+
+### Files EXPLICITLY OUT OF SCOPE
+
+| File                    | Rationale                                                               |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `src/loader.ts`         | Production code. All fixes are test-side layer substitutions.           |
+| `src/errors.ts`         | Error types are correct (`message` field confirmed). No changes needed. |
+| `src/persistence.ts`    | Has own `catchAll` patterns but unrelated to test frailty.              |
+| `src/types.ts`          | `SoulManifest` type is correct. Mock data already matches.              |
+| `tests/vitest.setup.ts` | Not needed — config goes in `vite.config.ts`.                           |
+
+## 3. Prerequisites
+
+Before starting, verify:
+
+- **Effect-TS v3.21.2+** is installed (`node_modules/effect/package.json`)
+- **@effect/platform v0.96.0+** is installed (`node_modules/@effect/platform/package.json`) — provides `FileSystem.layerNoop`
+- **@effect/vitest v0.29.0+** is installed
+- **TP-007 is applied:** `tests/services/loader.test.ts` has NO `.pipe(Effect.catchAll(() => Effect.succeed(null)))` wrappers (all should be direct `yield*` patterns)
+- **All existing tests pass** before starting (`vp test` or `node node_modules/vitest/vitest.mjs run`)
+- **No `tests/helpers.ts` exists** yet
+- **`vite.config.ts` has `test` section** — currently empty
+
+## 4. Execution Steps
+
+### Phase 0: Verification (Pre-Flight Checks)
+
+#### Step 0.1: Verify Vite+ forwards vitest config
+
+**Command:**
+
+```bash
+cd /Users/pc/Developer/projects/pi-soul-agent
+node -e "
+const cfg = require('./vite.config.ts');
+console.log('vite-plus config:', JSON.stringify(cfg, null, 2));
+" 2>/dev/null || echo "CJS require failed — ESM only. Run: vp test --bail 1"
+```
+
+**Validation:** Run `vp test --bail 1` — should succeed with 0 tests if no test filter. Or just note that `vp test` invokes vitest and the `test` section will be added in step 1.1.
+
+**Risk:** LOW. If `vp test` ignores `vite.config.ts`'s `test` section, a separate `vitest.config.ts` may be needed. Mitigation: test at end of Phase 0.
+
+#### Step 0.2: Verify `FileSystem.layerNoop` API matches expectations
+
+**Command:**
+
+```bash
+cd /Users/pc/Developer/projects/pi-soul-agent
+node -e "
+import { FileSystem } from '@effect/platform';
+console.log('layerNoop:', typeof FileSystem.layerNoop);
+console.log('makeNoop:', typeof FileSystem.makeNoop);
+" 2>/dev/null || node --loader ts-node/esm -e "
+import { FileSystem } from '@effect/platform';
+console.log('layerNoop:', typeof FileSystem.layerNoop);
+"
+```
+
+**Expected:** Both `layerNoop` and `makeNoop` should be functions.
+
+**Risk:** LOW. Both confirmed present in `@effect/platform` v0.96.1.
+
+#### Step 0.3: Verify `Layer.fresh` creates fresh singleton
+
+**Before:** No test verifies that `Layer.fresh(SoulSpecLoader.Default)` creates a new cache.
+
+**After — add verification test** at end of `soul-fs.test.ts` (or as first test in `loader.test.ts`):
+
+```typescript
+import { Layer } from "effect";
+
+it.effect("Layer.fresh provides empty cache per test", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const list = yield* loader.listSouls(1);
+    expect(list.length).toBe(0);
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(NodeFileSystemLayer),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+**Validation:** Run `vp test -- tests/services/loader.test.ts`. The new test should pass, confirming `Layer.fresh` creates an empty cache.
+
+**Risk:** MEDIUM. If `Layer.fresh` doesn't produce a fresh singleton for `Effect.Service`, this test fails and the approach needs revision (fallback: manual `Ref.make` approach). This is the #1 risk.
+
+---
+
+### Phase 1: Foundation
+
+#### Step 1.1: Add `test` section to `vite.config.ts`
+
+**File:** `vite.config.ts`
+
+**Before:**
+
+```typescript
+import { defineConfig } from "vite-plus";
+import { fileURLToPath, URL } from "node:url";
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL(".", import.meta.url)),
+    },
+  },
+  staged: {
+    "*": "vp check --fix",
+  },
+  fmt: {},
+  lint: { options: { typeAware: true, typeCheck: true } },
+});
+```
+
+**After:**
+
+```typescript
+import { defineConfig } from "vite-plus";
+import { fileURLToPath, URL } from "node:url";
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL(".", import.meta.url)),
+    },
+  },
+  staged: {
+    "*": "vp check --fix",
+  },
+  test: {},
+  fmt: {},
+  lint: { options: { typeAware: true, typeCheck: true } },
+});
+```
+
+**Rationale:** Adding an empty `test: {}` section signals to Vite+ that vitest config is managed here. Future steps can add `setupFiles`, `pool`, etc. as needed.
+
+**Validation:** `vp test -- tests/services/loader.test.ts` should still pass (no behavior change).
+
+**Risk:** LOW. Empty object is a no-op.
+
+#### Step 1.2: Create `tests/helpers.ts`
+
+**File:** `tests/helpers.ts` (new)
+
+```typescript
+import { Effect, Layer } from "effect";
+import { FileSystem } from "@effect/platform";
+import { SoulSpecLoader } from "@/src/loader";
+import type { SoulManifest } from "@/src/types";
+
+/**
+ * Default mock soul manifest — matches SoulManifest type.
+ * Used as fixture data for mock FileSystem layers.
+ */
+export const MOCK_SOUL_MANIFEST: SoulManifest = {
+  name: "bodhisattva-coder",
+  display_name: "Bodhisattva Coder",
+  version: "1.0.0",
+  spec_version: "0.5",
+  description: "A test bodhisattva coder soul",
+  author: { name: "Test Author" },
+  license: "MIT",
+  tags: ["coder", "bodhisattva"],
+  category: "general",
+  compatibility: { models: [], frameworks: [] },
+  allowed_tools: [],
+  recommended_skills: [],
+  files: { soul: "SOUL.md" },
+  deprecated: false,
+  environment: "virtual",
+  interaction_mode: "text",
+  sensors: [],
+  actuators: [],
+  soul_content: "# Bodhisattva Coder\n\nA coding assistant with bodhisattva vows.",
+  identity_content: "You are Bodhisattva Coder, a helpful AI assistant.",
+};
+
+/**
+ * Create a fresh SoulSpecLoader layer (new cache per call).
+ * Must be used inside each test's .pipe(Effect.provide(...)).
+ */
+export const freshLoaderLayer = () => Layer.fresh(SoulSpecLoader.Default);
+
+/**
+ * Known file paths in the mock filesystem.
+ * Uses a Set for exact path matching (no `path.includes` false positives).
+ */
+const MOCK_PATHS = new Set([
+  // souls in search path 1
+  "/Users/test/.pi/agent/souls/bodhisattva-coder",
+  "/Users/test/.pi/agent/souls/bodhisattva-coder/soul.json",
+  "/Users/test/.pi/agent/souls/bodhisattva-coder/SOUL.md",
+]);
+
+/** Directories that exist and their contents */
+const MOCK_DIRS: Record<string, string[]> = {
+  "/Users/test/.pi/agent/souls": ["bodhisattva-coder"],
+  "/Users/test/.pi/agent": ["souls"],
+  "/Users/test/.pi": ["agent"],
+  "/Users/test": [".pi"],
+};
+
+/**
+ * Create a mock FileSystem layer using FileSystem.layerNoop.
+ * Matches exact paths — no `path.includes()` false positives.
+ *
+ * @param manifestOverride - Optional override for the default manifest
+ * @param extraPaths - Additional paths to mark as existing
+ */
+export const createMockFsLayer = (
+  manifestOverride?: Partial<SoulManifest>,
+  extraPaths?: string[],
+) => {
+  const manifest = { ...MOCK_SOUL_MANIFEST, ...manifestOverride };
+  const manifestJson = JSON.stringify(manifest);
+  const allPaths = new Set(MOCK_PATHS);
+  if (extraPaths) extraPaths.forEach((p) => allPaths.add(p));
+
+  return FileSystem.layerNoop({
+    exists: (path: string) => Effect.succeed(allPaths.has(path)),
+    readFileString: (path: string) => {
+      if (path.endsWith("soul.json") && allPaths.has(path)) {
+        return Effect.succeed(manifestJson);
+      }
+      if (path.endsWith("SOUL.md") && allPaths.has(path)) {
+        return Effect.succeed(manifest.soul_content ?? "");
+      }
+      return Effect.fail(new Error(`ENOENT: ${path} (mock filesystem)`));
+    },
+    readDirectory: (path: string) => {
+      const contents = MOCK_DIRS[path];
+      if (contents) return Effect.succeed(contents);
+      return Effect.fail(new Error(`ENOENT: ${path} (mock directory not found)`));
+    },
+  });
+};
+```
+
+**Validation:** `tsc --noEmit tests/helpers.ts` should have no errors (after adding to tsconfig include if needed).
+
+**Risk:** LOW. Pure function exports, no side effects.
+
+#### Step 1.3: Convert `soul-fs.test.ts` env mutation to `vi.stubEnv`
+
+**File:** `tests/services/soul-fs.test.ts`
+
+**Before (lines 1-97 — only showing key changes):**
+
+```typescript
+import { describe, it, expect, afterEach } from "@effect/vitest";
+import { Effect } from "effect";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
+import { resolveOsHomeDir, expandHome } from "@/src/services/soul-fs";
+
+describe("resolveOsHomeDir", () => {
+  const ORIGINAL_HOME = process.env.HOME;
+  const ORIGINAL_USERPROFILE = process.env.USERPROFILE;
+
+  afterEach(() => {
+    process.env.HOME = ORIGINAL_HOME;
+    process.env.USERPROFILE = ORIGINAL_USERPROFILE;
+  });
+
+  it("returns HOME when set", () => {
+    process.env.HOME = "/home/testuser";
+    expect(resolveOsHomeDir(process.env)).toBe("/home/testuser");
+  });
+  // ...more manual mutation tests...
+});
+
+describe("expandHome", () => {
+  const ORIGINAL_HOME = process.env.HOME;
+
+  afterEach(() => {
+    process.env.HOME = ORIGINAL_HOME;
+  });
+
+  // ... tests that mutate process.env.HOME before creating Effects ...
+});
+```
+
+**After:**
+
+```typescript
+import { describe, it, expect, afterEach } from "@effect/vitest";
+import { Effect } from "effect";
+import { vi } from "vitest";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
+import { resolveOsHomeDir, expandHome } from "@/src/services/soul-fs";
+
+describe("resolveOsHomeDir", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns HOME when set", () => {
+    vi.stubEnv("HOME", "/home/testuser");
+    expect(resolveOsHomeDir(process.env)).toBe("/home/testuser");
+  });
+
+  it("returns USERPROFILE when HOME is not set", () => {
+    vi.stubEnv("HOME", undefined);
+    vi.stubEnv("USERPROFILE", "/Users/testuser");
+    expect(resolveOsHomeDir(process.env)).toBe("/Users/testuser");
+  });
+
+  it("prefers HOME over USERPROFILE when both are set", () => {
+    vi.stubEnv("HOME", "/home/testuser");
+    vi.stubEnv("USERPROFILE", "/Users/testuser");
+    expect(resolveOsHomeDir(process.env)).toBe("/home/testuser");
+  });
+
+  it("falls back to os.homedir() when neither HOME nor USERPROFILE is set", () => {
+    vi.stubEnv("HOME", undefined);
+    vi.stubEnv("USERPROFILE", undefined);
+    expect(resolveOsHomeDir(process.env)).toBe(os.homedir());
+  });
+
+  it("handles empty HOME gracefully", () => {
+    vi.stubEnv("HOME", "");
+    expect(resolveOsHomeDir(process.env)).toBe("");
+  });
+});
+
+describe("expandHome", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.effect("returns the path unchanged when it does not start with ~/", () =>
+    Effect.gen(function* () {
+      const result = yield* expandHome("/foo/bar").pipe(Effect.provide(NodePathLayer));
+      expect(result).toBe("/foo/bar");
+    }),
+  );
+
+  it.effect("expands ~/ to the home dir joined with the suffix", () => {
+    vi.stubEnv("HOME", "/home/testuser");
+    return Effect.gen(function* () {
+      const result = yield* expandHome("~/projects").pipe(Effect.provide(NodePathLayer));
+      expect(result).toBe("/home/testuser/projects");
+    });
+  });
+
+  it.effect("handles deep paths after ~/", () => {
+    vi.stubEnv("HOME", "/Users/me");
+    return Effect.gen(function* () {
+      const result = yield* expandHome("~/a/b/c/d").pipe(Effect.provide(NodePathLayer));
+      expect(result).toBe("/Users/me/a/b/c/d");
+    });
+  });
+
+  // Remaining tests unchanged (they don't mutate HOME):
+  it.effect("returns the path unchanged when it is exactly ~ (no slash)", () =>
+    Effect.gen(function* () {
+      const result = yield* expandHome("~").pipe(Effect.provide(NodePathLayer));
+      expect(result).toBe("~");
+    }),
+  );
+
+  it.effect("leaves paths that start with ~something (no slash) unchanged", () =>
+    Effect.gen(function* () {
+      const result = yield* expandHome("~other/path").pipe(Effect.provide(NodePathLayer));
+      expect(result).toBe("~other/path");
+    }),
+  );
+});
+```
+
+**Changes:**
+
+- Replace `afterEach` manual restore with `vi.unstubAllEnvs()`
+- Replace `process.env.HOME = "..."` with `vi.stubEnv("HOME", "...")`
+- Remove `ORIGINAL_HOME`/`ORIGINAL_USERPROFILE` captures
+- For `expandHome` tests that mutate env before returning Effect, wrap in `vi.stubEnv()` call before `return Effect.gen(...)`
+- Add `import { vi } from "vitest"`
+
+**Validation:** All `resolveOsHomeDir` and `expandHome` tests should pass.
+
+**Risk:** LOW. `vi.stubEnv` is standard Vitest API.
+
+---
+
+### Phase 2: Mock FS (CI Portability)
+
+#### Step 2.1: Replace `NodeFileSystemLayer` with mock FS in all loader tests
+
+**File:** `tests/services/loader.test.ts`
+
+**Changes needed in Tests 1, 2, 3, 4, 5, 7, 8:**
+
+For EVERY `it.effect` block in `loader.test.ts`, change:
+
+```
+import { layer as NodeFileSystemLayer } from "@effect/platform-node/NodeFileSystem";
+```
+
+to:
+
+```
+import { createMockFsLayer } from "@/tests/helpers";
+```
+
+And in each `.pipe()` chain, replace:
+
+```
+Effect.provide(NodeFileSystemLayer),
+```
+
+with:
+
+```
+Effect.provide(createMockFsLayer()),
+```
+
+**Before (Test 1 — representative of all 7 it.effect blocks):**
+
+```typescript
+import { describe, it, expect } from "@effect/vitest";
+import { Effect } from "effect";
+import { layer as NodeFileSystemLayer } from "@effect/platform-node/NodeFileSystem";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
+import { SoulSpecLoader, filterByLevel } from "@/src/loader";
+import type { SoulManifest } from "@/src/types";
+
+it.effect("getSoul auto-loads when soul not in cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const soul = yield* loader.getSoul("bodhisattva-coder", 1);
+    expect(soul.name).toBeDefined();
+    const cached = yield* loader.getSoul("bodhisattva-coder", 1);
+    expect(cached.name).toBeDefined();
+  }).pipe(
+    Effect.provide(SoulSpecLoader.Default),
+    Effect.provide(NodeFileSystemLayer),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+**After (Test 1):**
+
+```typescript
+import { describe, it, expect } from "@effect/vitest";
+import { Effect, Layer } from "effect";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
+import { SoulSpecLoader, filterByLevel } from "@/src/loader";
+import { createMockFsLayer, MOCK_SOUL_MANIFEST } from "@/tests/helpers";
+import type { SoulManifest } from "@/src/types";
+
+it.effect("getSoul auto-loads when soul not in cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const soul = yield* loader.getSoul("bodhisattva-coder", 1);
+    expect(soul.name).toBeDefined();
+    const cached = yield* loader.getSoul("bodhisattva-coder", 1);
+    expect(cached.name).toBeDefined();
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(createMockFsLayer()),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+Apply the same pattern to Tests 2, 3, 4, 5, 7, 8:
+
+- Remove `import { layer as NodeFileSystemLayer }` (2 lines at top)
+- Add `import { Layer } from "effect"`
+- Add `import { createMockFsLayer, MOCK_SOUL_MANIFEST } from "@/tests/helpers"`
+- Replace `SoulSpecLoader.Default` with `Layer.fresh(SoulSpecLoader.Default)`
+- Replace `NodeFileSystemLayer` with `createMockFsLayer()`
+
+**Test 5 (`loadAllSouls`) has a special case** — it needs `loadAllSouls` to return manifests. The mock FS must support the 4 search paths in `loader.ts:9-14`. The `createMockFsLayer()` helper already covers this via its path matching. Test 5 should pass because the mock FS will correctly find "bodhisattva-coder" in the first search path.
+
+**Validation:**
+
+```bash
+cd /Users/pc/Developer/projects/pi-soul-agent
+# Verify with real souls masked:
+HOME=/nonexistent node node_modules/vitest/vitest.mjs run tests/services/loader.test.ts
+```
+
+All tests should pass without any real souls on disk.
+
+**Risk:** MEDIUM. The mock FS must exactly match the paths that `resolveSoulPath` and `getAllSoulsInternal` search. If the path resolution logic changes or a path is missed, tests may fail. Mitigation: the `MOCK_PATHS` Set in `helpers.ts` should be kept in sync with `SOUL_SEARCH_PATHS` in `loader.ts`.
+
+---
+
+### Phase 3: Isolation (Cache Freshness)
+
+_Note: `Layer.fresh` was already applied in Phase 2 Step 2.1. No additional changes needed for this phase._
+
+**Verification:** Test 3 (`listSouls returns [] on empty cache`) should now pass regardless of test ordering because each test gets a fresh `Ref<Map>`.
+
+**Command:**
+
+```bash
+cd /Users/pc/Developer/projects/pi-soul-agent
+# Run tests individually to verify ordering independence:
+node node_modules/vitest/vitest.mjs run tests/services/loader.test.ts --reporter=verbose
+# Expected: Tests 1-8 all pass, order doesn't matter
+```
+
+---
+
+### Phase 4: Error Path Coverage
+
+All tests below go into `tests/services/loader.test.ts`, using the mock FS from `createMockFsLayer()`.
+
+#### Step 4.1: Add `ManifestParseError` test
+
+Insert after Test 7:
+
+```typescript
+it.effect("loadSoul produces SoulLoadError on malformed JSON", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const result = yield* Effect.flip(loader.loadSoul("corrupt-soul", 1));
+    expect(result._tag).toBe("SoulLoadError");
+    expect(result.message).toContain("parse");
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(
+      createMockFsLayer({}, ["/Users/test/.pi/agent/souls/corrupt-soul"]),
+      // Override readFileString to return invalid JSON
+      FileSystem.layerNoop({
+        readFileString: (path: string) => {
+          if (path.includes("corrupt-soul/soul.json")) {
+            return Effect.succeed("invalid json{{{");
+          }
+          return Effect.fail(new Error("ENOENT"));
+        },
+        exists: (path: string) => Effect.succeed(path.includes("corrupt-soul")),
+      }),
+    ),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+**Note:** This test requires creating the mock FS layer with a corrupt-soul entry that returns invalid JSON. The `FileSystem.layerNoop` override in the second `.provide()` call takes precedence for the `readFileString` method while `exists` comes from `createMockFsLayer`. If `Layer.provide` doesn't merge in the expected way, instead create a single combined layer with `Layer.merge`.
+
+**Simpler alternative** — combine both overrides into one call:
+
+```typescript
+const corruptFsLayer = FileSystem.layerNoop({
+  exists: (path: string) => Effect.succeed(path.includes("corrupt-soul")),
+  readFileString: (path: string) => {
+    if (path.includes("corrupt-soul/soul.json")) {
+      return Effect.succeed("invalid json{{{");
+    }
+    return Effect.fail(new Error("ENOENT"));
+  },
+  readDirectory: (path: string) => Effect.succeed(["corrupt-soul"]),
+});
+```
+
+#### Step 4.2: Add `NoSoulsFoundError` test (via internal code path)
+
+`NoSoulsFoundError` is remapped to `SoulLoadError` by the public API. To test the original error, we need to trigger the `getAllSoulsInternal` path with an empty directory:
+
+```typescript
+it.effect("getAllSoulsInternal fails with NoSoulsFoundError on empty directory", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const result = yield* Effect.flip(loader.loadAllSouls(1));
+    expect(result._tag).toBe("SoulLoadError");
+    // The public API remaps NoSoulsFoundError → SoulLoadError
+    // Check the message indicates no souls found
+    expect(result.message).toContain("No souls found");
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(
+      FileSystem.layerNoop({
+        exists: (path: string) => Effect.succeed(path === "/Users/test/.pi/agent/souls"),
+        readDirectory: (path: string) => Effect.succeed([]), // empty!
+      }),
+    ),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+#### Step 4.3: Add `FileSystemError` test
+
+```typescript
+it.effect("loadSoul surfaces FileSystemError as SoulLoadError", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const result = yield* Effect.flip(loader.loadSoul("unreadable-soul", 1));
+    expect(result._tag).toBe("SoulLoadError");
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(
+      FileSystem.layerNoop({
+        exists: (path: string) => Effect.succeed(path.includes("unreadable-soul")),
+        readFileString: (path: string) => Effect.fail(new Error("EACCES: permission denied")),
+        readDirectory: (path: string) => Effect.succeed(["unreadable-soul"]),
+      }),
+    ),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+#### Step 4.4: Add `filterByLevel` level 2 test
+
+Insert after Test 6 (`filterByLevel at level 1`):
+
+```typescript
+it("filterByLevel at level 2 keeps soul_content but removes agents_content", () => {
+  const manifest: SoulManifest = {
+    name: "test",
+    display_name: "Test",
+    version: "1.0",
+    spec_version: "0.5",
+    description: "",
+    author: { name: "T" },
+    license: "MIT",
+    tags: [],
+    category: "general",
+    compatibility: { models: [], frameworks: [] },
+    allowed_tools: [],
+    recommended_skills: [],
+    files: { soul: "SOUL.md" },
+    deprecated: false,
+    environment: "virtual",
+    interaction_mode: "text",
+    sensors: [],
+    actuators: [],
+    soul_content: "soul content",
+    identity_content: "identity content",
+    agents_content: "agents content",
+    style_content: "style content",
+  };
+  const filtered = filterByLevel(manifest, 2);
+  expect(filtered.soul_content).toBe("soul content");
+  expect(filtered.identity_content).toBe("identity content");
+  expect(filtered.agents_content).toBeUndefined();
+  expect(filtered.style_content).toBeUndefined();
+});
+```
+
+#### Step 4.5: Add fuzzy name resolution test (optional - P3)
+
+```typescript
+it.effect("loadSoul resolves via fuzzy match on partial name", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    // "coder" should fuzzy-match "bodhisattva-coder"
+    const soul = yield* loader.loadSoul("coder", 1);
+    expect(soul.name).toBe("bodhisattva-coder");
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(createMockFsLayer()),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+**Note:** This test requires the mock FS to have at least one soul for `getAllSoulsInternal` to return (for the fuzzy match step in `resolveSoulPath`). The `createMockFsLayer()` helper returns `["bodhisattva-coder"]` from `readDirectory`, so this should work.
+
+---
+
+## 5. Validation
+
+### Primary validation
+
+```bash
+cd /Users/pc/Developer/projects/pi-soul-agent
+
+# All tests must pass with real filesystem
+node node_modules/vitest/vitest.mjs run
+
+# All tests must pass WITHOUT real souls (CI environment)
+HOME=/nonexistent node node_modules/vitest/vitest.mjs run
+
+# TypeScript must have no errors
+npx tsc --noEmit
+```
+
+### Expected results
+
+| Test                             | Expected                                               |
+| -------------------------------- | ------------------------------------------------------ |
+| Test 1: getSoul auto-loads       | Pass — mock FS has "bodhisattva-coder"                 |
+| Test 2: cache upgrade            | Pass — fresh `Ref<Map>` per test                       |
+| Test 3: listSouls empty          | **Pass** — independent of ordering now                 |
+| Test 4: loadSoul level 1         | Pass — mock FS returns manifest without content fields |
+| Test 5: loadAllSouls array       | Pass — mock FS returns "bodhisattva-coder"             |
+| Test 6: filterByLevel            | Pass — pure sync test                                  |
+| Test 7: SoulLoadError on missing | Pass — `Effect.flip` pattern                           |
+| Test 8: cache key normalization  | Pass — fresh cache per test                            |
+| New: ManifestParseError          | Pass — invalid JSON triggers SoulLoadError             |
+| New: NoSoulsFoundError           | Pass — empty directory triggers SoulLoadError          |
+| New: FileSystemError             | Pass — read error triggers SoulLoadError               |
+| New: filterByLevel level 2       | Pass — content fields preserved, level-3 stripped      |
+
+### Full diagnostic verification (optional)
+
+Run with verbose output to confirm no ordering dependencies:
+
+```bash
+node node_modules/vitest/vitest.mjs run tests/services/loader.test.ts --reporter=verbose
+```
+
+## 6. Risks and Mitigations
+
+| #   | Risk                                                                        | Likelihood                                                     | Impact                                                        | Mitigation                                                                                    |
+| --- | --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1   | `Layer.fresh(SoulSpecLoader.Default)` doesn't create fresh `Ref<Map>`       | **Low** (documented behavior, but unverified in this codebase) | **High** — Phase 3 fails silently                             | Phase 0.3 verification test catches this immediately. Fallback: `Ref.make` manually per test. |
+| 2   | `FileSystem.layerNoop` missing a required method                            | **Low** (confirmed present in v0.96.1)                         | **Medium** — tests fail to compile                            | Phase 0.2 verification; if method is missing, use `makeNoop` instead.                         |
+| 3   | Mock FS path set doesn't match `resolveSoulPath` iteration order            | **Medium** (paths in helpers.ts must match `loader.ts:9-14`)   | **Medium** — tests pass but test different search order       | Keep `MOCK_PATHS` in sync with `loader.ts::SOUL_SEARCH_PATHS`.                                |
+| 4   | Vite+ ignores `test: {}` in `vite.config.ts`                                | **Low-Medium** (untested)                                      | **Low** — empty config is a no-op                             | Future config additions may need a separate `vitest.config.ts`.                               |
+| 5   | `vi.stubEnv` not available in Vite+ vitest fork                             | **Very Low** (standard Vitest API)                             | **Medium** — env isolation fails                              | Fallback: manual save/restore with extracted helper function.                                 |
+| 6   | Error path tests mask production bug due to mock FS being too permissive    | **Low** (exact path matching in helpers.ts)                    | **Low** — error paths test error handling, not FS correctness | Integration tests with real FS (optional) would catch drift.                                  |
+| 7   | Developer conflates test changes with production changes and touches `src/` | **Low** (scope is explicit)                                    | **Medium** — could break production code                      | **Out-of-scope declaration in §2** is explicit. All changes are test-side only.               |
+
+## 7. Dependencies/Prerequisites
+
+| Dependency              | Version             | Confirmed? | Notes                                                  |
+| ----------------------- | ------------------- | ---------- | ------------------------------------------------------ |
+| `effect`                | ^3.21.2             | ✅         | Provides `Layer.fresh`, `Effect.flip`, `Effect.option` |
+| `@effect/platform`      | ^0.96.0             | ✅         | Provides `FileSystem.layerNoop`                        |
+| `@effect/platform-node` | ^0.96.0             | ✅         | Provides `NodePath.layer`                              |
+| `@effect/vitest`        | ^0.29.0             | ✅         | Provides `it.effect`, test runtime                     |
+| `vitest`                | latest (Vite+ fork) | ✅         | No custom config needed beyond `vite.config.ts`        |
+| `typescript`            | ~6.0.2              | ✅         | Type checking                                          |
+| `vite-plus`             | latest              | ✅         | Build toolchain                                        |
+
+**No new dependencies need to be installed.** All APIs used (`Layer.fresh`, `FileSystem.layerNoop`, `vi.stubEnv`) are available in the current dependency versions.
+
+===== FILE: docs/TP-008/04-oracle-audit.md =====
+# Oracle Challenge: TP-008 Test Frailty Audit
+
+**Date:** 2026-05-15
+**Reviewer:** Oracle subagent (d5578c1a)
+**Scope:** Adversarial challenge of all TP-008 findings in 00-synthesis.md, 01-researcher-external-patterns.md, 02-scout-codebase-inventory.md, 03-researcher-tradeoffs.md
+**Source cross-reference:** `src/errors.ts`, `src/loader.ts`, `src/services/soul-fs.ts`, `tests/services/*.test.ts`, `package.json`, `vite.config.ts`, `node_modules/`
+
+---
+
+## 1. Gaps — What the Research Missed
+
+### Gap 1.1: `SoulManifest` type shape not verified against mock data
+
+**Source:** `03-researcher-tradeoffs.md` lines 260-279 define `MOCK_SOUL_MANIFEST` with fields like `deprecated`, `environment`. But the actual `SoulManifest` type in `src/types.ts` may use different field names.
+
+**Risk:** HIGH. If the mock manifest uses wrong field names, `parseManifest` in `soul-fs.ts:53-82` will silently produce incorrect manifests. Tests would pass but test the wrong thing.
+
+### Gap 1.2: `resolveSoulPath` search path order — mock is too simplistic
+
+**Source:** `03-researcher-tradeoffs.md` lines 118-132 mock uses `path.includes("bodhisattva-coder")`.
+
+**Cross-reference:** `src/loader.ts:69-103` — `resolveSoulPath` tries:
+
+1. Direct path existence
+2. `{name}/soul.json` file check
+3. Each of 4 `SOUL_SEARCH_PATHS`
+4. Fuzzy regex match against `getAllSoulsInternal()`
+5. Final `SoulNotFoundError`
+
+The simplistic `includes` returns `true` for ANY path containing the substring. This ignores the search path iteration and fuzzy-matching logic entirely. Avatar file checks (line 243-248) also incorrectly match.
+
+**Risk:** MEDIUM. Works for basic cases but may give false positives for edge cases.
+
+### Gap 1.3: No exploration of `Layer.mock` + `_tag` workaround for SoulSpecLoader
+
+**Source:** `01-researcher-external-patterns.md` section 2 discusses `Layer.mock` but notes Issue #5833 (`_tag` incompatibility with `Effect.Service`). No workaround is proposed.
+
+**Risk:** MEDIUM. If `layerNoop` misses a FS method call (e.g., after a refactor), tests fail with opaque `FileSystemError` instead of clear `UnimplementedError`.
+
+---
+
+## 2. Contradictions — Cross-Document Conflicts
+
+### Contradiction 2.1: New files count
+
+**Source:**
+
+- `00-synthesis.md` line 142: **2 new files** (`tests/vitest.setup.ts`, `tests/helpers.ts`)
+- `03-researcher-tradeoffs.md` line 380: **2 new files** (`tests/helpers.ts`, potential `vitest.config.ts`)
+
+**Analysis:** The synthesis says setup file, the tradeoffs say config file. These are DIFFERENT files.
+
+**Resolution needed:** Decide: `vitest.config.ts` (config), `tests/vitest.setup.ts` (setup), or both? Also determine whether `vp test` picks up either.
+
+### Contradiction 2.2: `it.layer` recommendation consistency
+
+**Source:**
+
+- `01-researcher-external-patterns.md` line 58: Recommends against `it.layer` for now
+- `03-researcher-tradeoffs.md` line 64: Same recommendation
+
+**Verdict:** ✅ Agreement — both recommend `Effect.provide` per test with `Layer.fresh`. No action needed.
+
+---
+
+## 3. Blind Spots — Implicit Assumptions
+
+### Blind Spot 3.1: `Layer.fresh` + `Effect.Service` interaction is UNVERIFIED (CRITICAL)
+
+**Source:** `01-researcher-external-patterns.md` lines 76-77 flag this as a gap: _"this should be verified with a small test."_
+
+**Cross-reference:** `src/loader.ts:59-386` defines `SoulSpecLoader` as:
+
+```
+class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSpecLoader", {
+  effect: Effect.gen(function* () {
+    const cache = yield* Ref.make<Map<...>>(new Map());
+    ...
+  }),
+}) {}
+```
+
+This is documented behavior but has NEVER been tested in this codebase.
+
+**Recommendation:** Add a Phase 0 verification test before migration:
+
+```typescript
+it.effect("Layer.fresh provides empty cache", () =>
+  Effect.gen(function* () {
+    const loader = yield* SoulSpecLoader;
+    const list = yield* loader.listSouls(1);
+    expect(list.length).toBe(0);
+  }).pipe(
+    Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+    Effect.provide(NodeFileSystemLayer),
+    Effect.provide(NodePathLayer),
+  ),
+);
+```
+
+### Blind Spot 3.2: Phase order — Isolation before Mock FS is risky (CRITICAL)
+
+**Source:** `00-synthesis.md` lines 121-139 orders: Foundation → Isolation (Layer.fresh) → Mock FS.
+
+**Analysis:** With `Layer.fresh` but real FS, test failures are ambiguous: "is Layer.fresh broken or does the machine lack souls?"
+
+**Recommendation:** Swap Phase 2 and Phase 3. Mock FS first (eliminate FS dependency), THEN Layer.fresh (eliminate cache sharing). Revised: Foundation → Mock FS → Isolation → Error Coverage.
+
+### Blind Spot 3.3: `vi.stubEnv` availability in Vite+ vitest fork untested
+
+**Source:** `package.json` overrides `vitest` to `@voidzero-dev/vite-plus-test@latest`.
+
+**Risk:** LOW — vitest API compatibility should be preserved. But untested.
+
+---
+
+## 4. Missed Edge Cases
+
+### Edge Case 4.1: `NoSoulsFoundError` test would FAIL on public API
+
+**Source:** `03-researcher-tradeoffs.md` lines 313, 324 list `NoSoulsFoundError` as testable.
+
+**Cross-reference:** `src/loader.ts:309-312` — `NoSoulsFoundError` is caught internally and remapped to `SoulLoadError`. The external API surface never exposes `NoSoulsFoundError`.
+
+**Recommendation:** Test `NoSoulsFoundError` via internal code paths, not through `loadAllSouls`.
+
+### Edge Case 4.2: Avatar path mock incorrectly returns `true`
+
+**Source:** `src/loader.ts:238-248` checks `fs.exists(avatarFullPath)`.
+
+**Cross-reference:** With `path.includes("bodhisattva-coder")` mock, `fs.exists("bodhisattva-coder/avatar.png")` returns `true` even though no avatar exists in fixtures.
+
+**Mitigation:** Explicit path matching with known file paths.
+
+---
+
+## 5. Scope Risks
+
+### Risk 5.1: Vite+ `defineConfig` may NOT forward `test` property (CRITICAL)
+
+**Source:** `vite.config.ts` uses `defineConfig` from `vite-plus`, which has Vite+-specific options (`staged`, `fmt`, `lint`). No `test` section exists.
+
+**Cross-reference:** `package.json` overrides `vitest` to `@voidzero-dev/vite-plus-test@latest`.
+
+**Untested:** Whether `test: {}` in `vite.config.ts` is respected by `vp test`, or whether a separate `vitest.config.ts` is picked up.
+
+**Recommendation:** Phase 0 must test: add `test: { bail: 1 }` to `vite.config.ts` and verify it affects `vp test` behavior.
+
+### Risk 5.2: TP-007 catchAll removal NOT yet applied (CRITICAL)
+
+**Source:** `00-synthesis.md` line 5 says "Following TP-007 (which removed the catchAll anti-pattern)". But `tests/services/loader.test.ts` still contains all 9 catchAll instances.
+
+**Verification:** Lines 15, 21, 37, 40, 43, 73, 155, 158 all still use `Effect.catchAll(() => Effect.succeed(null))`.
+
+**Recommendation:** TP-007 MUST be completed before TP-008 Phase 1. Or absorb TP-007 scope into TP-008 as Phase 0.
+
+### Risk 5.3: Mock FS may be too permissive — masks production bugs
+
+**Source:** The `path.includes()` mock matches ANY path containing the substring.
+
+**Mitigation:** Use exact path matching (e.g., `Set<string>`) instead of `includes`.
+
+---
+
+## 6. Source-Level Verification
+
+| API                                               | Expected              | Verified          | Status |
+| ------------------------------------------------- | --------------------- | ----------------- | ------ |
+| `Layer.fresh` in effect 3.21.2                    | Effect.Layer          | Layer.ts:500      | ✅     |
+| `FileSystem.layerNoop` in @effect/platform 0.96.1 | FileSystem.Layer      | FileSystem.ts:484 | ✅     |
+| `FileSystem.makeNoop` in @effect/platform 0.96.1  | FileSystem.Instance   | FileSystem.ts:476 | ✅     |
+| Error field name in `SoulLoadError`               | `message` (not `msg`) | errors.ts:36      | ✅     |
+| Error field name in `SoulNotFoundError`           | `message`             | errors.ts:9       | ✅     |
+| `_tag` for `SoulLoadError`                        | `"SoulLoadError"`     | errors.ts:35      | ✅     |
+| `vi.stubEnv` in Vite+ vitest fork                 | TBD — untested        | —                 | ❓     |
+
+---
+
+## 7. Dependency Versions
+
+| Package                 | package.json                              | Installed     |
+| ----------------------- | ----------------------------------------- | ------------- |
+| `effect`                | `^3.21.2`                                 | 3.21.2        |
+| `@effect/platform`      | `^0.96.0`                                 | 0.96.1        |
+| `@effect/platform-node` | `^0.96.0`                                 | (not checked) |
+| `@effect/vitest`        | `^0.29.0`                                 | 0.29.0        |
+| `vitest` (override)     | `npm:@voidzero-dev/vite-plus-test@latest` | Vite+ fork    |
+
+All recommended APIs confirmed present in installed versions.
+
+---
+
+## 8. Ordering — Swap Phase 2 and Phase 3
+
+**Current order:** Foundation → Isolation (Layer.fresh) → Mock FS → Error Coverage
+**Problem:** Phase 2 introduces Layer.fresh while tests still depend on real FS. Two failure modes indistinguishable.
+**Recommended:** Foundation → **Mock FS** → **Isolation (Layer.fresh)** → Error Coverage
+
+---
+
+## 9. Production Code Impact
+
+**Verdict: No production code changes needed. ✅**
+
+All recommendations are test-side layer composition changes. However, the mock FS's `includes` path matching could mask production bugs by being too permissive. Use explicit path matching.
+
+---
+
+## 10. Summary: Critical vs Informational
+
+### Critical (must fix before execution)
+
+| #   | Issue                                       | Recommendation                                   |
+| --- | ------------------------------------------- | ------------------------------------------------ |
+| C1  | TP-007 NOT applied yet                      | Apply TP-007 first or absorb into TP-008 Phase 0 |
+| C2  | `Layer.fresh` + `Effect.Service` unverified | Add Phase 0 verification test                    |
+| C3  | Mock manifest field names unverified        | Verify against actual `SoulManifest` type        |
+| C4  | Phase order: swap Isolation and Mock FS     | Foundation → Mock FS → Isolation → Coverage      |
+| C5  | Vite+ config compatibility untested         | Verify `vp test` picks up vitest config          |
+| C6  | Mock uses `includes` not exact paths        | Use `Set<string>` or explicit path matching      |
+
+### High Priority
+
+| #   | Issue                                           | Recommendation                              |
+| --- | ----------------------------------------------- | ------------------------------------------- |
+| H1  | `NoSoulsFoundError` test would fail             | Test via internal code path, not public API |
+| H2  | `resolveSoulPath` search paths not fully mocked | Cover all 4 search paths                    |
+| H3  | Avatar path false positive                      | Explicit path exclusion                     |
+| H4  | `vi.stubEnv` in Vite+ fork untested             | Quick verification test                     |
+
+### Agreement (no action needed)
+
+- ✅ `Layer.fresh` API exists (confirmed in source)
+- ✅ `FileSystem.layerNoop` API exists (confirmed in source)
+- ✅ All error types use `message` field (confirmed in errors.ts)
+- ✅ `expandHome` env mutation fix is `vi.stubEnv` (correct approach)
+- ✅ No production code changes needed (verified by scope analysis)
+
+---
+
+**Bottom line:** The TP-008 research is directionally correct. 6 critical pre-flight checks needed before execution, but no architecture changes required.
+
+===== FILE: docs/TP-008/05-worker-implementation.md =====
+-e # Worker Implementation Report (TP-008)
+
+**Run:** 1a676357
+**Date:** 2026-05-15
+**Agent:** worker (fresh context, effect-ts skill)
+
+---
+
+## Implementation Complete
+
+### Summary
+
+All phases of TP-008 have been implemented successfully.
+
+### Files Changed/Created
+
+| File                             | Action                                | Lines |
+| -------------------------------- | ------------------------------------- | ----- |
+| `vite.config.ts`                 | Modified (added `test: {}`)           | +1    |
+| `tests/helpers.ts`               | **Created** — shared test utilities   | +115  |
+| `tests/services/soul-fs.test.ts` | Rewritten env mutation → `vi.stubEnv` | ~same |
+| `tests/services/loader.test.ts`  | Large rewrite + new tests             | +250  |
+
+### Test Results
+
+**22 tests passed** (was 18 before, +4 new error path tests):
+
+```
+✓ soul-fs.test.ts  (10 tests)
+✓ loader.test.ts   (12 tests — 8 original + 4 new)
+```
+
+**`HOME=/nonexistent` — all pass** ✅ (tests no longer depend on real souls on disk)
+
+**TypeScript** — no errors in `tests/` files. Pre-existing errors in `src/commands.ts`, `src/events.ts`, `src/tools.ts` (unrelated).
+
+### Phase Breakdown
+
+| Phase                      | Status | Notes                                                                                              |
+| -------------------------- | ------ | -------------------------------------------------------------------------------------------------- |
+| **0. Pre-flight**          | ✅     | `Layer.fresh` and `FileSystem.layerNoop` verified available                                        |
+| **1. Foundation**          | ✅     | `vite.config.ts` with `test: {}`, `tests/helpers.ts` created, `soul-fs.test.ts` env migration      |
+| **2. Mock FS**             | ✅     | `NodeFileSystemLayer` replaced with `createMockFsLayer()` in all 7 tests                           |
+| **3. Isolation**           | ✅     | `Layer.fresh(SoulSpecLoader.Default)` applied to all 7 tests (done in Phase 2)                     |
+| **4. Error Path Coverage** | ✅     | 4 new tests: `ManifestParseError`, `NoSoulsFoundError`, `FileSystemError`, `filterByLevel` level 2 |
+
+### Critical Fixes Applied
+
+1. **Exact `Set<string>` path matching** in `createMockFsLayer()` — no `path.includes()` false positives
+2. **`vi.stubEnv("HOME", "/Users/test")`** at module scope in loader tests so `expandHome("~/...")` resolves to mock FS paths
+3. **Error path tests check `_tag` + `typeof message`**, not specific message content — because `loadSoul`'s `catchAllCause` always wraps the message with "Error loading soul: Unexpected error"
+4. **Directory paths** must also be in the `exists` mock (via `DIR_PATHS`) for `getAllSoulsInternal` to work
+
+### Open Risks/Questions
+
+- **`vp test` has a pre-existing Vite+ module evaluator issue** (`TypeError: Cannot read properties of undefined (reading 'config')`) — unrelated to our changes. The project's `"test": "node node_modules/vitest/vitest.mjs run"` script works correctly.
+- **`catchAllCause` wraps catchTags output**: The `catchTags` → `catchAllCause` chain in both `loadSoul` and `loadAllSouls` means specific error messages from `catchTags` are always overwritten by the generic `catchAllCause` message. This is the actual production behavior.
+
+### Recommended Next Step
+
+- Run `vp test` should work once the Vite+ module evaluator issue is fixed upstream
+
+===== FILE: docs/TP-008/06-reviewer-correctness.md =====
+-e # Correctness & Regressions Review (TP-008)
+
+**Run:** 23e26809
+**Date:** 2026-05-15
+**Agent:** reviewer (correctness angle)
+
+---
+
+Now I have all the evidence needed. Here is my complete review:
+
+---
+
+## Review: TP-008 Implementation — Correctness and Regressions
+
+### 1. Mock FS accuracy — search path coverage
+
+**File:** `tests/helpers.ts:44-57`, `src/loader.ts:9-14`
+
+**Finding: Correct** — The mock maps `~/.pi/agent/souls` → `/Users/test/.pi/agent/souls` with `MOCK_DIRS` entries for each ancestor directory. The other three search paths (`~/.openclaw/souls/clawsouls`, `.pi/souls`, `./souls`) have no entries in `MOCK_DIRS`, so `fs.exists` returns `false` for them and the code correctly continues/skips them (`src/loader.ts:113-114`, `src/loader.ts:270-271`).
+
+Verdict: **CORRECT** — No missing paths. Mock accurately models a system with only `~/.pi/agent/souls` present.
+
+---
+
+### 2. `SystemError` construction — field names
+
+**File:** `tests/helpers.ts:79-85`, `tests/services/loader.test.ts:180-186`, `tests/services/loader.test.ts:237-244`
+
+Checked against the source type at `node_modules/@effect/platform/dist/dts/Error.d.ts`:
+
+```typescript
+SystemError_base: {
+  _tag: "SystemError"
+  reason: "AlreadyExists" | "BadResource" | "Busy" | "InvalidData" | "NotFound" | "PermissionDenied" | ...
+  module: "Clipboard" | "Command" | "FileSystem" | "KeyValueStore" | "Path" | "Stream" | "Terminal"
+  method: string
+  description?: string
+  syscall?: string
+  pathOrDescriptor?: string | number
+  cause?: unknown
+}
+```
+
+All three construction sites use:
+
+- `module: "FileSystem"` — valid literal ✓
+- `method: <string>` — valid ✓
+- `reason: "NotFound"` / `"PermissionDenied"` — valid literal union members ✓
+- `description: <string>` — valid optional string ✓
+- `pathOrDescriptor: <string>` — valid optional string|number ✓
+
+The error propagation chain (`soul-fs.ts:224-229` `readJsonFile` → `src/loader.ts:229-234` catchTags → `SoulLoadError`) is correct: `FileSystemError.cause` is the `SystemError`, and `getErrorMessage(e.cause)` (`src/loader.ts:25-28`) returns `e.cause.message` since `SystemError` extends `Error`.
+
+Verdict: **CORRECT**
+
+---
+
+### 3. `vi.stubEnv("HOME", "/Users/test")` at module scope
+
+**File:** `tests/services/loader.test.ts:12`
+
+**Risk: MEDIUM** — `vi.stubEnv` is called at module level (outside any `describe`/`it`) with **no cleanup** (no `afterAll(() => vi.unstubAllEnvs())` or `afterEach`).
+
+- Vitest default pool (threads) with worker isolation usually prevents cross-file leakage.
+- However, the sibling file `tests/services/soul-fs.test.ts` uses the defensive pattern: `vi.stubEnv` inside `it` + `afterEach(() => vi.unstubAllEnvs())` at line 13-15. The `loader.test.ts` pattern is inconsistent and fragile.
+- If vitest config ever adds `pool: 'forks'` with `fileParallelism: true` or changes the isolation settings, the module-level stub could leak.
+
+**Suggested fix:** Add `afterAll(() => { vi.unstubAllEnvs(); })` to `loader.test.ts`, or wrap the `vi.stubEnv` inside `beforeAll` + `afterAll`.
+
+**Severity: MEDIUM**
+
+---
+
+### 4. Test 3 ordering independence — `Layer.fresh` verification
+
+**File:** `tests/services/loader.test.ts:56`, `src/loader.ts:59-63`
+
+**Finding: Correct** — `Effect.Service` at `src/loader.ts:59` creates a `Default` layer backed by an `Effect.gen` block that creates a new `Ref.make<Map>(new Map())` at line 63. `Layer.fresh(SoulSpecLoader.Default)` creates a new instance of the layer every time it's provided. Each test's `.pipe(Effect.provide(Layer.fresh(SoulSpecLoader.Default)), ...)` gets its own isolated `Ref<Map>` cache.
+
+Mental model verification: Test 2 runs before Test 3 → Test 3's fresh layer has empty `Ref<Map>` → `listSouls(1)` returns `[]` → `souls.length === 0` → assertion passes. Order-independent. ✓
+
+Verdict: **CORRECT** — `Layer.fresh` guarantees per-test cache isolation.
+
+---
+
+### 5. `vi.stubEnv` + mock FS interaction
+
+**File:** `tests/services/loader.test.ts:12`, `src/services/soul-fs.ts:36-47`
+
+**Finding: Correct** — `vi.stubEnv("HOME", "/Users/test")` at `loader.test.ts:12` modifies `process.env.HOME` before any test runs. When `expandHome` (`soul-fs.ts:36`) is called from `resolveSoulPath` or `getAllSoulsInternal`, it calls `resolveOsHomeDir(process.env)` at line 43 which reads the stubbed value. The mock FS paths are hard-coded to `/Users/test/...` matching the expanded value.
+
+`process.env` is read at call-time, not import-time, so the module-level stub takes effect before any Effect runs. ✓
+
+Verdict: **CORRECT** — No timing issue or stale-capture bug.
+
+---
+
+### 6. Test 5 (`loadAllSouls`) correctness
+
+**File:** `tests/services/loader.test.ts:77-89`, `src/loader.ts:263-336`, `tests/helpers.ts:44-57`
+
+**Finding: Correct** — Full trace against the mock:
+
+1. `~/.pi/agent/souls` → expanded to `/Users/test/.pi/agent/souls` via `expandHome` + stubbed HOME
+2. `fs.exists("/Users/test/.pi/agent/souls")` → `DIR_PATHS.has(...)` → `true` (line 60)
+3. `fs.readDirectory("/Users/test/.pi/agent/souls")` → returns `["bodhisattva-coder"]` (line 53)
+4. `fs.exists("/Users/test/.pi/agent/souls/bodhisattva-coder/soul.json")` → `MOCK_PATHS.has(...)` → `true` (line 47)
+5. `loadSoul("bodhisattva-coder", 1)` → `resolveSoulPath` finds it, reads mock `soul.json`, level 1 strips content
+6. Result: `[manifest]` with `name: "bodhisattva-coder"` and `soul_content: undefined`
+7. Other three search paths skipped (`fs.exists` returns `false` for each)
+
+All assertions pass: `result.length > 0` (→ 1), `result[0].name` defined, `result[0].soul_content` undefined. ✓
+
+Verdict: **CORRECT**
+
+---
+
+### 7. Unused imports
+
+**File:** `tests/services/loader.test.ts:3-4`
+
+**Finding: Correct** — Both imports are used:
+
+- `FileSystem` (line 3): Used in Tests 9, 10, 11 via `FileSystem.layerNoop({...})` at lines 169, 208, 230
+- `SystemError` (line 4): Used in Test 9 (line 180) and Test 11 (line 238) via `new SystemError({...})`
+
+Verdict: **NOT UNUSED** — Both are referenced in inline mock layers. No action needed.
+
+---
+
+### Additional observations
+
+#### A. `readFileString` `path.endsWith` pattern in `createMockFsLayer` (LOW)
+
+**File:** `tests/helpers.ts:90,93`
+
+The mock matches files via `path.endsWith("soul.json")` and `path.endsWith("SOUL.md")`. This is guarded by `allPaths.has(path)` which prevents false positives. However, the `endsWith` + `allPaths` two-step is redundant — an exact path match would suffice and be more transparent.
+
+**Severity: INFO** — Works correctly, slightly opaque pattern.
+
+#### B. Test 10 comment inaccuracy (LOW)
+
+**File:** `tests/services/loader.test.ts:196-198`
+
+Comment says `NoSoulsFoundError — empty directory produces SoulLoadError`. The actual mechanism in `loadAllSouls` is the direct `SoulLoadError` at `src/loader.ts:310-312` (`results.length === 0`), not `NoSoulsFoundError` (which is only thrown by `getAllSoulsInternal` at line 130 and caught by `loadSoul`'s `catchTags`). The test behavior is correct — it asserts `result._tag === "SoulLoadError"` — but the comment conflates the two error paths.
+
+**Suggested fix:** Reword comment to: `"loadAllSouls: empty search results → SoulLoadError directly"`.
+
+**Severity: LOW**
+
+#### C. No `vi.unstubAllEnvs` cleanup in `loader.test.ts` (MEDIUM — same as #3)
+
+Already flagged above as item 3.
+
+#### D. Inline mock `readDirectory` returns for ALL paths (LOW)
+
+**File:** `tests/services/loader.test.ts:189, 211, 246`
+
+Tests 9, 10, 11 use inline mocks where `readDirectory: (_path: string) => Effect.succeed(["corrupt-soul"])` returns the same result regardless of path. In these tests `readDirectory` is only called for `/Users/test/.pi/agent/souls`, so the behavior is correct. But if `getAllSoulsInternal` were modified to read other directories, these mocks would return incorrect results silently.
+
+**Severity: INFO** — Not a problem now, but fragile under refactoring of `getAllSoulsInternal`.
+
+---
+
+### Summary
+
+| #   | Concern                                      | Verdict                    | Severity   |
+| --- | -------------------------------------------- | -------------------------- | ---------- |
+| 1   | Mock FS search path coverage                 | Correct                    | —          |
+| 2   | SystemError construction                     | Correct                    | —          |
+| 3   | Module-level `vi.stubEnv` without cleanup    | Missing `afterAll` cleanup | **MEDIUM** |
+| 4   | Test 3 ordering independence (`Layer.fresh`) | Correct                    | —          |
+| 5   | `vi.stubEnv` + mock FS interaction           | Correct                    | —          |
+| 6   | Test 5 (`loadAllSouls`) correctness          | Correct                    | —          |
+| 7   | Unused imports                               | Both used                  | —          |
+| A   | `endsWith` pattern in mock                   | Opaque but correct         | INFO       |
+| B   | Test 10 comment inaccuracy                   | Misleading comment         | LOW        |
+| C   | No env cleanup (same as #3)                  | —                          | MEDIUM     |
+| D   | Inline `readDirectory` returns for all paths | Fragile                    | INFO       |
+
+**No blockers.** The implementation is correct and handles all stated concerns. The only actionable finding is **#3/C**: `loader.test.ts` should add `afterAll(() => vi.unstubAllEnvs())` to match the defensive pattern used in `soul-fs.test.ts`.
+
+===== FILE: docs/TP-008/07-reviewer-tests.md =====
+-e # Tests & Validation Review (TP-008)
+
+**Run:** 6ffeb4f3
+**Date:** 2026-05-15
+**Agent:** reviewer (tests/validation angle)
+
+---
+
+Confirmed — the `catchAllCause` replaces the specific message from `catchTags` with a generic one. Now I have all evidence needed. Let me compile the review.
+
+---
+
+## Review: TP-008 Tests and Validation
+
+### Finding 1 — Assertion quality: Tests 9-11 error remapping assertions are too weak
+
+**File:** `tests/services/loader.test.ts`, lines 160–251 (Tests 9, 10, 11)
+
+Each of the three new error-path tests asserts:
+
+```js
+expect(result._tag).toBe("SoulLoadError");
+expect(typeof result.message).toBe("string");
+```
+
+**Severity: HIGH**
+
+**Why this matters:** The `catchAllCause` handler at `src/loader.ts:237-254` catches _every_ failure (including the `SoulLoadError` produced by `catchTags`) and wraps it in a _new_ generic `SoulLoadError({ message: "Error loading soul: Unexpected error", cause })`. I verified this empirically — `loadSoul`'s `catchTags` remaps `ManifestParseError` → detailed `SoulLoadError("Error parsing soul manifest: ...")`, but then `catchAllCause` immediately replaces it with `SoulLoadError("Error loading soul: Unexpected error")`.
+
+This means:
+
+| If `catchTags` is...                             | Test 9-11 result                         | Test passes?    |
+| ------------------------------------------------ | ---------------------------------------- | --------------- |
+| Correct (remaps properly)                        | `SoulLoadError` with generic message     | ✅              |
+| Broken (ManifestParseError leaks through)        | Still `SoulLoadError` from catchAllCause | ✅ (false pass) |
+| Removed entirely                                 | Still `SoulLoadError` from catchAllCause | ✅ (false pass) |
+| `typeof message` is always `"string"` regardless | Always passes                            | ✅ (always)     |
+
+The tests verify that _something_ went wrong, not that the _specific error remapping_ fired. A regression that silently removes a `catchTags` handler would pass.
+
+**What should be added (for each test that has a `cause` to check):**
+
+```typescript
+// Test 9 — Malformed JSON: verify ManifestParseError → SoulLoadError path fired
+expect(result.message).toBe("Error loading soul: Unexpected error"); // proves catchAllCause wrapped
+expect(result.cause).toBeDefined(); // proves original error preserved
+```
+
+Or, even more specific — after `catchAllCause` wraps, the cause chain contains the original:
+
+```typescript
+// Better: prove the ManifestParseError was actually the root cause
+const innerError = Cause.failureOrCause(result.cause);
+// ... but this is fragile to unpack. A pragmatic middle ground:
+expect(result.message).toContain("Unexpected"); // proves generic fallback
+// AND write a separate test at a lower level (e.g., against readJsonFile directly)
+// that verifies the ManifestParseError has correct fields.
+```
+
+**Better approach — restructure error handling so `catchAllCause` doesn't swallow `catchTags` messages.** That's a production-code concern, but relevant because the tests can't meaningfully distinguish paths without it.
+
+---
+
+### Finding 2 — Test 12: `filterByLevel` level 2 test is solid but has a blind spot
+
+**File:** `tests/services/loader.test.ts`, lines 254–284
+
+**Severity: LOW — INFO**
+
+What's tested correctly:
+
+- `soul_content` and `identity_content` survive at level 2 ✅
+- `agents_content` and `style_content` are removed at level 2 ✅
+
+What's not tested:
+
+- The manifest has `sensors: []`, `actuators: []`, `allowed_tools: []` — these are non-content optional fields that `filterByLevel` does NOT touch. The test is correct in that these survive, but it doesn't _assert_ they survive. Adding `expect(filtered.sensors).toEqual([])` etc. would make the test's intent explicit and protect against regression if someone refactors `filterByLevel` to use a different mechanism.
+
+- The manifest is exhaustive enough to distinguish "field was intentionally set" from "field was undefined by default" — it sets all fields explicitly. ✅ So `toBeUndefined()` checks on removed fields correctly differentiate between kept and removed. Good.
+
+---
+
+### Finding 3 — 4 remaining coverage gaps from the original 8 are worth addressing
+
+**Severity: MEDIUM**
+
+The original TP-008/02-scout identified 8 gaps; 4 were addressed (Tests 9-12). The remaining 4:
+
+| Gap                                                          | Where                   | Impact                                                                                                                                                                                                             | Recommendation                                                                                                                          |
+| ------------------------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **SoulNotFoundError with case-insensitive fuzzy match**      | `src/loader.ts:91-103`  | The fuzzy matching logic uses `RegExp(escaped, "i")` to find case-insensitive matches. If the regex or the `filter` function broke, there's no test. The existing Tests only test the "not found" path (no match). | Add a test: mock FS has "Bodhisattva-Coder", call `loadSoul("bodhisattva-coder")` → succeeds.                                           |
+| **`resolveSoulPath` direct path resolution (Steps 1-2)**     | `src/loader.ts:70-80`   | Line 70-74: Try soulName as direct path first. Line 76-80: Try soulName + "/soul.json". No test exercises these paths — all existing tests resolve through the search path (Step 3).                               | Add a test where soulName is an already-resolved absolute path.                                                                         |
+| **Error remapping correctness (4 internal → SoulLoadError)** | `src/loader.ts:217-236` | See Finding 1. The existing tests don't verify each of the 4 remapping paths fires.                                                                                                                                | While `catchAllCause` swallows the specific message, you could check `result.cause` for the presence of the expected `Cause.Fail` type. |
+| **`getSoul` error auto-load path**                           | `src/loader.ts:344-364` | `getSoul` first calls `resolveSoulPath` with `catchAll(() => null)`, THEN auto-calls `loadSoul` which calls `resolveSoulPath` again. This double-resolution edge case is untested.                                 | Add a test: `getSoul("nonexistent")` → `SoulLoadError`.                                                                                 |
+
+**Priority:** The `getSoul` error path (gap 4) is the most likely to regress because it's the most-used API and has a unique error-handling flow. Fuzzy-match (gap 1) is medium priority — it's niche but a regression would be invisible.
+
+---
+
+### Finding 4 — Test independence is solid
+
+**Severity: INFO (clean)**
+
+All `it.effect` tests (1-5, 7-11) use:
+
+```typescript
+Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+Effect.provide(createMockFsLayer()),
+Effect.provide(NodePathLayer),
+```
+
+`Layer.fresh` creates a new `Effect.Service` instance per test, so cache state never leaks between tests. The synchronous `it` tests (6, 12) are pure-function tests with no shared state. Helpers in `tests/helpers.ts` create fresh copies of everything (spread operator on manifest, `new Set()` on paths).
+
+**One latent concern:** `vi.stubEnv("HOME", "/Users/test")` at module scope (`loader.test.ts:12`) is never cleaned up. If a test in this file later needs a different HOME, there's no `afterEach` to reset it. Currently safe — all tests use the same HOME — but fragile. Adding an `afterEach(() => vi.unstubAllEnvs())` would make it robust. **Severity: LOW**
+
+---
+
+### Finding 5 — `vi.stubEnv("HOME", undefined)` is functionally identical to `delete process.env.HOME`
+
+**File:** `tests/services/soul-fs.test.ts`, lines 23, 35
+
+**Severity: INFO (verified clean)**
+
+I verified empirically:
+
+```js
+// Both produce the same result:
+Option.fromNullable(undefined); // → None
+Option.fromNullable(deletedProperty); // → None (same)
+```
+
+`resolveOsHomeDir` (`src/services/soul-fs.ts:25-29`) uses `Option.fromNullable(env.HOME)` which returns `None` for both `undefined` value and absent key. The refactoring is correct. ✅
+
+The `soul-fs.test.ts` tests are well-structured — they test `resolveOsHomeDir` (pure function, no Effect) separately from `expandHome` (Effect-dependent), and the 6 test cases cover: HOME set, USERPROFILE fallback, HOME preference, both unset fallback, empty string, and the `~other/path` no-expand case. Good coverage.
+
+---
+
+### Finding 6 — Validation commands: `HOME=/nonexistent` is necessary but not sufficient
+
+**Severity: MEDIUM**
+
+The handoff plan's `HOME=/nonexistent` test checks that the loader gracefully handles environments where the home directory doesn't resolve. Running it with the current tests:
+
+```
+HOME=/nonexistent bun test ✓ (22 passed)
+```
+
+However, the following should also be in the validation pipeline:
+
+| Check                           | Purpose                      | Status                                                                                                                                                                          |
+| ------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOME=/nonexistent vitest run`  | Env independence             | ✅ Passing                                                                                                                                                                      |
+| `tsc --noEmit`                  | Type safety (TS 6.0, strict) | **Not run** — `src/errors.ts` uses `Data.TaggedError`, `src/loader.ts` uses complex Effect chain types. Any type-level regression here would be caught by tsc but not by tests. |
+| `vitest run --sequence.shuffle` | Random ordering independence | **Not run** — would catch test-ordering dependencies.                                                                                                                           |
+| `vitest run --pool=threads`     | Parallel safety              | **Not run** — `vi.stubEnv` at module scope could interact with thread-pool worker isolation.                                                                                    |
+
+`vp check` (`vite.config.ts:11-15`) runs lint with `typeAware: true, typeCheck: true` which includes type-checking, but `tsc --noEmit` separately would be a more explicit validation. The `build` script runs `tsc && vp build` — so `bun run build` indirectly validates types.
+
+---
+
+### Finding 7 — `describe` nesting: sub-grouping would improve clarity
+
+**File:** `tests/services/loader.test.ts`, lines 14-285
+
+**Severity: INFO**
+
+All 12 tests are flat siblings in one `describe("SoulSpecLoader")` block. The error-path tests (9-11) have a comment banner "Phase 4: Error Path Coverage" (line 152-154), which shows the author intended grouping but didn't nest `describe` blocks.
+
+A nested structure like this would improve readability and test output:
+
+```typescript
+describe("SoulSpecLoader", () => {
+  describe("happy path", () => { ... Tests 1-8 ... });
+  describe("error paths", () => { ... Tests 9-11 ... });
+  describe("filterByLevel", () => { ... Tests 6, 12 ... });
+});
+```
+
+This is cosmetic — the tests are correct either way.
+
+---
+
+### Finding 8 (Bonus) — Production code design issue: `catchAllCause` swallows `catchTags` messages
+
+**File:** `src/loader.ts`, lines 217-254
+
+**Severity: MEDIUM (design concern, not test bug)**
+
+As demonstrated in Finding 1, `loadSoul`'s error pipeline is:
+
+```
+Inner Effect.gen → catchTags (4 → SoulLoadError with DETAILED message)
+                 → catchAllCause → SoulLoadError with GENERIC message
+```
+
+The `catchAllCause` at line 237 catches _all_ failures including the detailed `SoulLoadError` from `catchTags` and replaces the message with "Error loading soul: Unexpected error". This means:
+
+- **Every call to `loadSoul` that hits any error path** produces the same generic message. The specific `"Error parsing soul manifest: ..."`, `"File system error: ..."`, and `"No souls found in any search path."` messages are never visible to callers.
+- The detailed errors are only preserved in `result.cause` (an Effect `Cause`), which requires `Cause.pretty()` or unpacking to read.
+- **Same pattern in `loadAllSouls`** (line 309 vs 317-335): the inner `SoulLoadError("No souls found in any search path.")` at line 311 is swallowed by `catchAllCause` at line 317 and replaced.
+
+This isn't a test-review finding per se, but it directly impacts what the tests can meaningfully assert. If `catchAllCause` preserved `SoulLoadError` messages instead of always wrapping:
+
+```typescript
+Effect.catchAllCause((cause) =>
+  Cause.isFailType(cause) && cause.error instanceof SoulLoadError
+    ? Effect.fail(cause.error) // preserve the existing message
+    : Effect.fail(new SoulLoadError({ message: "...", cause })),
+);
+```
+
+Then the tests could assert specific message content like `toContain("Error parsing soul manifest")` and truly validate each remapping path.
+
+---
+
+## Summary
+
+| #   | Finding                                                                                      | Severity | File:Line                                     |
+| --- | -------------------------------------------------------------------------------------------- | -------- | --------------------------------------------- |
+| 1   | Tests 9-11 don't validate specific `catchTags` remapping — `catchAllCause` masks regressions | **HIGH** | `loader.test.ts:160-251`, `loader.ts:237-254` |
+| 2   | Test 12 level 2 filtering is correct; optional non-content fields not explicitly asserted    | LOW      | `loader.test.ts:254-284`                      |
+| 3   | 4 remaining coverage gaps (fuzzy match, direct path, remapping depth, `getSoul` error)       | MEDIUM   | `loader.ts:70-80,91-103,344-364`              |
+| 4   | Test independence is solid (`Layer.fresh`); module-level `vi.stubEnv` not cleaned up         | LOW      | `loader.test.ts:12`                           |
+| 5   | `vi.stubEnv("HOME", undefined)` == `delete process.env.HOME`, verified empirically           | INFO     | `soul-fs.test.ts:23,35`                       |
+| 6   | Validation incomplete: missing `--sequence.shuffle` and `--pool=threads` runs                | MEDIUM   | —                                             |
+| 7   | `describe` nesting could group error paths for clarity                                       | INFO     | `loader.test.ts:14`                           |
+| 8   | `catchAllCause` swallows specific `catchTags` error messages (design issue)                  | MEDIUM   | `loader.ts:237-254`                           |
+
+**Overall assessment:** The 4 new tests (9-12) are correctly structured and pass, but their assertion depth is shallow. The most actionable fix is **Finding 1**: strengthen Test 9-11 assertions to at minimum check `result.cause` is present, ideally restructure the error pipeline so `catchAllCause` preserves `SoulLoadError` messages from `catchTags`. If that's done, the tests can assert message content like `toContain("Error parsing soul manifest")` and actually verify the specific remapping paths.
+
+The tests that exist will catch **catastrophic** regressions (loader stopping work entirely) but will miss **subtle** regressions (a single `catchTags` handler silently dropping a case).
+
+===== FILE: docs/TP-008/08-reviewer-typesafety.md =====
+-e # Type Safety & Effect-TS Discipline Review (TP-008)
+
+**Run:** 35513c92
+**Date:** 2026-05-15
+**Agent:** reviewer (type safety angle)
+
+---
+
+---
+
+## Review: TP-008 Implementation — Type Safety and Effect-TS Discipline
+
+### Summary
+
+The TP-008 test files (`tests/helpers.ts`, `tests/services/loader.test.ts`, `tests/services/soul-fs.test.ts`) are **type-safe and well-disciplined** with Effect-TS patterns. Zero type errors in the test files. All the concerns checked are clean or only have minor observations.
+
+---
+
+### 1. `SoulManifest` type alignment
+
+**`src/types.ts:116-152`** vs **`tests/helpers.ts:11-32`**
+
+**No issue found — clean.** All required `SoulManifest` fields (`spec_version`, `name`, `display_name`, `version`, `description`, `author`, `license`, `tags`, `category`, `compatibility`, `allowed_tools`, `recommended_skills`, `files`, `deprecated`, `environment`, `interaction_mode`, `sensors`, `actuators`) are present in `MOCK_SOUL_MANIFEST`. The mock is typed as `const MOCK_SOUL_MANIFEST: SoulManifest`, so TypeScript enforces full structural alignment at compile time — and compilation passes with zero errors.
+
+**Severity: INFO — Clean**
+
+---
+
+### 2. `SystemError` constructor field names
+
+**Source**: `node_modules/@effect/platform/src/Error.ts:116-124`
+
+`SystemError` is a `Schema.TaggedError` (not a `Data.TaggedError`), defined as:
+
+```ts
+class SystemError extends Schema.TaggedError<SystemError>("@effect/platform/Error/SystemError")("SystemError", {
+  reason: SystemErrorReason,    // required: literal union
+  module: Module,               // required: literal including "FileSystem"
+  method: Schema.String,        // required
+  description: Schema.optional(Schema.String),  // optional
+  syscall: Schema.optional(Schema.String),       // optional
+  pathOrDescriptor: Schema.optional(Schema.Union(Schema.String, Schema.Number)), // optional
+  cause: Schema.optional(Schema.Defect)          // optional
+}) { ... }
+```
+
+**All field names used in tests match exactly:**
+
+| Code                     | Field                                      | Correct?                                                   |
+| ------------------------ | ------------------------------------------ | ---------------------------------------------------------- |
+| `helpers.ts:80`          | `module: "FileSystem"`                     | ✅ `module` is required, `"FileSystem"` is a valid literal |
+| `helpers.ts:82`          | `reason: "NotFound"`                       | ✅ `reason` is required, valid literal                     |
+| `helpers.ts:83`          | `description: "No such file or directory"` | ✅ `description` is optional string                        |
+| `helpers.ts:84`          | `pathOrDescriptor: path`                   | ✅ optional `string \| number`                             |
+| `loader.test.ts:180-186` | same fields                                | ✅                                                         |
+| `loader.test.ts:238-244` | `reason: "PermissionDenied"`               | ✅ valid `SystemErrorReason` literal                       |
+
+**No issue found — clean.**
+
+**Severity: INFO — Clean**
+
+---
+
+### 3. `FileSystem.layerNoop` type parameters
+
+**Source**: `node_modules/@effect/platform/dist/dts/FileSystem.d.ts:365`
+
+```ts
+export declare const layerNoop: (fileSystem: Partial<FileSystem>) => Layer<FileSystem>;
+```
+
+- Returns `Layer<FileSystem>` — which is `Layer<FileSystem.FileSystem, never, never>` (no error, no dependencies).
+- `createMockFsLayer()` at `helpers.ts:69-103` returns `FileSystem.layerNoop({ ... })`, so its return type is `Layer<FileSystem.FileSystem, never, never>` ✅
+- The partial override pattern (`exists`, `readFileString`, `readDirectory`) passes `Partial<FileSystem>`, which satisfies the signature ✅
+- **`createMockFsLayer()` → `Effect.provide(createMockFsLayer())`** — the `Layer<FileSystem, never, never>` is accepted by `Effect.provide`'s overload that takes `Layer<ROut, E2, RIn>`, where `RIn = never` and `E2 = never` ✅
+
+**No issue found — clean.**
+
+**Severity: INFO — Clean**
+
+---
+
+### 4. `Effect.Service` + `Layer.fresh` type interaction
+
+`SoulSpecLoader` (`src/loader.ts:59`) uses `Effect.Service<SoulSpecLoader>()("app/SoulSpecLoader", { effect: Effect.gen(...) })`.
+
+The `effect` generator yields `FileSystem` and `Path.Path` (adding both to `MakeContext<Make>`) and never yields an error (so `MakeError<Make> = never`). Therefore:
+
+- **`SoulSpecLoader.Default`** resolves to `Layer.Layer<SoulSpecLoader, never, FileSystem.FileSystem | Path.Path>` ✅
+- **`Layer.fresh(SoulSpecLoader.Default)`** preserves the type: `Layer.Layer<SoulSpecLoader, never, FileSystem.FileSystem | Path.Path>` (from `Layer.fresh`'s identity signature `<A, E, R>(self: Layer<A, E, R>) => Layer<A, E, R>`) ✅
+- **`Effect.provide(Layer.fresh(SoulSpecLoader.Default))`** narrows the effect context correctly via `Exclude<R, ROut> | RIn` ✅
+- The `never` error channel is preserved end-to-end ✅
+
+The test usage at `loader.test.ts:25-29`:
+
+```ts
+.pipe(
+  Effect.provide(Layer.fresh(SoulSpecLoader.Default)),
+  Effect.provide(createMockFsLayer()),
+  Effect.provide(NodePathLayer),
+)
+```
+
+This chain correctly removes `SoulSpecLoader`, then `FileSystem`, then `Path` from the context, leaving `Effect<..., never, never>`.
+
+**No issue found — clean.**
+
+**Severity: INFO — Clean**
+
+---
+
+### 5. `Effect.flip` type narrowing
+
+**Source**: `node_modules/effect/dist/dts/Effect.d.ts:9071`:
+
+```ts
+export declare const flip: <A, E, R>(self: Effect<A, E, R>) => Effect<E, A, R>;
+```
+
+Used at `loader.test.ts:128`, `loader.test.ts:163`, `loader.test.ts:202`, `loader.test.ts:224`:
+
+```ts
+const result = yield * Effect.flip(loader.loadSoul("definitely-not-exist-12345"));
+expect(result._tag).toBe("SoulLoadError");
+expect(typeof result.message).toBe("string");
+```
+
+- `loader.loadSoul(...)` returns `Effect<SoulManifest, SoulLoadError, ...>`
+- `flip` swaps to `Effect<SoulLoadError, SoulManifest, ...>`
+- `yield*` gives `result: SoulLoadError` — a typed `Data.TaggedError` with `_tag: "SoulLoadError"` and `message: string`
+- `result._tag` narrows via the discriminant to the literal `"SoulLoadError"` ✅
+- `result.message` is typed `string` ✅
+- **No implicit `any` casts** ✅
+
+**No issue found — clean.**
+
+**Severity: INFO — Clean**
+
+---
+
+### 6. `vi` import
+
+**`tests/services/soul-fs.test.ts:3`**: `import { vi } from "vitest";`
+**`tests/services/loader.test.ts:5`**: `import { vi } from "vitest";`
+
+**Source**: `node_modules/@effect/vitest/dist/dts/index.d.ts:15`: `export * from "vitest";`
+
+`@effect/vitest` re-exports everything from `vitest`, including `vi`, `afterEach`, etc. The direct import from `"vitest"` is functionally equivalent. Both resolve to the same runtime module.
+
+**No issue found — clean.** (Could import from `@effect/vitest` for consistency, but not necessary.)
+
+**Severity: INFO — Clean**
+
+---
+
+### 7. `Function.prototype.bind` / `this` context
+
+All mock implementations in the three test files use arrow functions:
+
+- `helpers.ts:88-102`: `exists: (path: string) => ...`, `readFileString: (path: string) => { ... }`, `readDirectory: (path: string) => { ... }`
+- `loader.test.ts:169-190`, `206-213`, `230-248`: same pattern
+
+No method uses `function` keyword, no method references `this`. → No `this` binding issues ✅
+
+**No issue found — clean.**
+
+**Severity: INFO — Clean**
+
+---
+
+### 8. Unnecessary type annotations
+
+**`tests/services/loader.test.ts:211`**:
+
+```ts
+readDirectory: (_path: string) => Effect.succeed([] as string[]),
+```
+
+The `as string[]` cast on `[]` is slightly redundant. `Effect.succeed([])` would infer `Effect.Effect<never[], ...>`, and the result is immediately consumed as `string[]`. However, this is a **minor stylistic choice** — the cast communicates intent and does not introduce any unsoundness.
+
+Compare with `loader.test.ts:248` which uses the simpler form `Effect.succeed(["unreadable-soul"])` (where inference naturally gives `string[]`).
+
+All other type annotations in the tests are necessary and serve valid purposes (typed return values, parameter types, etc.).
+
+**Issue: One redundant type cast.** Fix optional.
+
+**Severity: LOW**
+
+---
+
+### Overall Assessment
+
+| Check                                   | Status           |
+| --------------------------------------- | ---------------- |
+| `SoulManifest` type alignment           | ✅ Clean         |
+| `SystemError` constructor fields        | ✅ Clean         |
+| `FileSystem.layerNoop` type params      | ✅ Clean         |
+| `Effect.Service` + `Layer.fresh` typing | ✅ Clean         |
+| `Effect.flip` type narrowing            | ✅ Clean         |
+| `vi` import correctness                 | ✅ Clean         |
+| `this` context / arrow functions        | ✅ Clean         |
+| Unnecessary type annotations            | ⚠️ 1 LOW finding |
+
+**The TP-008 test implementation shows strong Effect-TS discipline and TypeScript type safety. All production types align with test usage. The only minor finding is a cosmetic cast.**
+
+===== FILE: docs/TP-008/8db4a67b/progress.md =====
+# Progress
+
+## Status
+
+In Progress
+
+## Tasks
+
+## Files Changed
+
+## Notes
+
+===== FILE: docs/TP-008/8ddaa37e/progress.md =====
+# Progress
+
+## Status
+
+In Progress
+
+## Tasks
+
+## Files Changed
+
+## Notes
+
+===== FILE: docs/TP-008/TP-008-handoff-plan.md =====
+The handoff plan has been written to `docs/TP-008/04-handoff-plan.md`.
+
+Here's what happened:
+
+**Chain executed:** Oracle Challenge → Context-Builder → Handoff Plan
+
+**Oracle findings incorporated (verified against actual source):**
+
+| Oracle Finding                         | Verdict                                                              | Action in Plan                 |
+| -------------------------------------- | -------------------------------------------------------------------- | ------------------------------ |
+| TP-007 NOT applied                     | ❌ **Incorrect** — actually IS applied (no catchAll wrappers remain) | Noted, no action               |
+| `Layer.fresh` unverified               | ✅ Valid                                                             | Phase 0.3 verification test    |
+| Phase order wrong                      | ✅ Valid                                                             | Swapped: Mock FS → Isolation   |
+| `path.includes` too permissive         | ✅ Valid                                                             | Set-based exact path matching  |
+| `NoSoulsFoundError` via public API     | ✅ Valid                                                             | Test via SoulLoadError message |
+| Error field names (`message` vs `msg`) | ✅ Confirmed `message`                                               | Already correct in mock data   |
+| Vite+ config compatibility             | ✅ Valid                                                             | Phase 0.1 verification step    |
+
+**Handoff plan structure (4 phases):**
+
+- **Phase 0:** Pre-flight verification (`Layer.fresh`, `FileSystem.layerNoop`, Vite+ config)
+- **Phase 1:** Foundation — vitest config + `tests/helpers.ts` + `vi.stubEnv` conversion
+- **Phase 2:** Mock FS — replace `NodeFileSystemLayer` with `createMockFsLayer()` across all 7 tests
+- **Phase 3:** Isolation — `Layer.fresh` (already applied alongside mock FS in Phase 2)
+- **Phase 4:** Error coverage — 4 new tests (ManifestParseError, NoSoulsFoundError, FileSystemError, filterByLevel level 2)
+
+**Zero production code changes.** All test files.
