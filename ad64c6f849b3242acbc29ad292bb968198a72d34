@@ -1,0 +1,15 @@
+# pi-soul-agent — docs index (git-notes)
+#
+# Design docs for this repo live in git NOTES, not the working tree — one ref
+# per area of concern, all anchored to the ROOT commit. This note is the manifest.
+# Skill: docs-in-git-notes.
+#
+# Read an area:   ROOT=$(git rev-list --max-parents=0 HEAD | tail -1)
+#                 git notes --ref=<ref> show $ROOT
+# Refspec (once): git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
+#                 git fetch origin '+refs/notes/*:refs/notes/*'
+
+| Area         | Ref                          | Contents                                                                                  |
+| ------------ | ---------------------------- | ----------------------------------------------------------------------------------------- |
+| Domain       | refs/notes/docs-domain       | CONTEXT.md — ubiquitous language / glossary                                               |
+| Architecture | refs/notes/docs-architecture | Module map, the Effect event-handler bridge, runtime/layer wiring, event & command inventory, error model, open findings |
