@@ -2,6 +2,7 @@
 #
 # File index:
 #   docs/architecture/overview.md — module map, event-handler bridge, wiring, findings
+#   docs/architecture/type-safety.md — type-cast policy: which casts get Effect idioms, which are acceptable boundary casts
 #   docs/architecture/heartbeat-wedge-triage.md — CONFIRMED heartbeat scheduler wedge (repro + root cause + fix direction)
 #
 # Anchored to root commit in ref refs/notes/docs-architecture.
@@ -297,3 +298,37 @@ Two viable seams:
 ### Artifacts (throwaway, /tmp only — no tracked files touched)
 - `/tmp/hb-triage/harness.ts` — real-closure repro (RED, exit 1, deterministic).
 - `/tmp/hb-triage/differential.ts` — fix-direction validation (buggy wedges / fixed recovers).
+
+===== FILE: docs/architecture/type-safety.md =====
+# Type-cast policy (Effect-TS idioms)
+
+Researched against the vendored Effect 3.21.2 source (src/.effect). Splits the project's type
+casts into "replace with an Effect idiom" vs "acceptable boundary cast". Full scratch investigation
+lived in research-effect-type-safety.md (gitignored working-tree scratch).
+
+## Replace — unsafe or redundant casts
+- `JSON.parse(content) as T` (src/services/soul-fs.ts, readJsonFile) — untyped parse. Decode via
+  Schema instead: Schema.decodeUnknownSync / decodeUnknownEither (src/.effect/packages/effect/src/
+  Schema.ts:472, 595). The project already has SoulManifestDataSchema + decodeOrThrow and
+  ActiveSoulSchema, so validating the parsed value is machinery already present; the cast skipped it.
+- `return { _tag: "…" } as SoulHeartbeatResult` ×4 (src/commands.ts) — an object literal widened,
+  then asserted onto the union. Use `satisfies SoulHeartbeatResult` (validates the literal without
+  the unsafe widening a cast performs). Heavier alternative if the result type grows: Data.taggedEnum
+  (src/.effect/packages/effect/src/Data.ts:464) with $is/$match. Project had zero `satisfies` uses.
+- `(cause as Error).message` (src/services/soul-fs.ts) — casting an unknown catch value. Guard:
+  `cause instanceof Error ? cause.message : String(cause)`. Effect models caught defects as unknown
+  (Cause.defects, src/.effect/packages/effect/src/Cause.ts) precisely because they are not Error.
+- `[] as SoulManifest[]` (src/commands.ts) — annotate the return type instead of asserting the literal.
+
+## Keep — acceptable boundary casts, not defects
+- `Object.keys(x) as Array<keyof …>` — Effect ITSELF casts identically in Record.keys
+  (src/.effect/packages/effect/src/Record.ts:958) and Struct.keys (Struct.ts:222). A TypeScript
+  limitation; no safer idiom exists. "Fixing" it would be cargo-cult ceremony.
+- `as unknown as ExtensionAPI` / `as unknown as AppRuntime` (tests) — boundary casts building test
+  doubles for an EXTERNAL SDK interface (Pi). Effect uses Layer.succeed(Tag, impl) only for its own
+  Service tags; there is no Effect idiom for a third-party interface. Flagged honestly in the test.
+- `as const` (×41) — literal narrowing, not unsafe assertions. Not a target.
+
+## Verdict
+The project is largely type-robust already; the one real gap was the untyped JSON.parse sitting next
+to the schema that should validate it. Fix the four above; leave the three boundary casts alone.
