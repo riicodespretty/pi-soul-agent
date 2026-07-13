@@ -55,6 +55,7 @@ This project exists to learn:
 | `/soul --heartbeat <mode>` | Set heartbeat cadence: `off`, `lite`, `full`, or `<N>` |
 | `/soul-list`               | List all available souls                               |
 | `/soul-info [--full]`      | Show active soul details                               |
+| `/soul-heartbeat`          | Inject the active soul's heartbeat grounding on demand |
 
 Tab-completion for `/soul` offers available soul names (each with its description) and, once you start typing a flag, the flags `--clear` (`-c`), `--help` (`-h`), and `--heartbeat` — including the heartbeat modes `lite`, `full`, and `off`.
 
@@ -84,6 +85,10 @@ Set the cadence with `/soul --heartbeat <mode>` (persisted with the active soul,
 | `<N>`  | Custom: every **N** turns from activation (a positive whole number) |
 
 A custom interval fires at N, 2N, 3N … turns after activation — e.g. `/soul --heartbeat 10` grounds every 10 turns. Mode words take precedence over the integer parse. Zero, negative, fractional, and non-numeric values are **rejected** (with the message `heartbeat must be off|lite|full or a positive whole number`), never clamped or treated as `off`. Values above 1000 are accepted but produce a warning, since reminders would then be very rare.
+
+#### Manual grounding
+
+Run `/soul-heartbeat` to ground the active soul **right now**, without waiting for the next scheduled beat. It injects the same hidden reminder the automatic scheduler sends, but on demand. It **ignores the heartbeat mode entirely** — it fires even when the mode is `off` (which disables only the automatic cadence) — and it does **not** shift the automatic schedule. It is gated only by an active soul, loaded at **level 3**, with heartbeat content present; each unmet gate is reported rather than failing silently.
 
 ---
 
@@ -222,7 +227,7 @@ pi-soul-agent/
 ├── package.json              # Pi manifest + deps
 ├── .pi/extensions/soul.ts    # Extension entry point
 ├── src/
-│   ├── commands.ts           # /soul, /soul-list, /soul-info
+│   ├── commands.ts           # /soul, /soul-list, /soul-info, /soul-heartbeat
 │   ├── events.ts             # session_start, resources_discover, before_agent_start, heartbeat
 │   ├── loader.ts             # SoulSpecLoader (Effect service)
 │   ├── persistence.ts        # ActiveSoulPersistence (Effect service)

@@ -9,6 +9,7 @@ import type { DeepPartial, SoulFiles, SoulManifest, SoulManifestData } from "../
 export type MockSoulManifest = DeepPartial<SoulManifestData> & {
   readonly name: string;
   readonly soulPath?: string;
+  readonly contents?: Record<string, string>;
 };
 
 export const DEFAULT_SOURCE: SoulManifestData = {
@@ -80,7 +81,7 @@ export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFES
   const fileSystem: Record<string, string> = {};
 
   for (const soul of souls) {
-    const { soulPath, ...manifestFields } = soul;
+    const { soulPath, contents, ...manifestFields } = soul;
     const merged: MockSoulManifest = {
       ...DEFAULT_SOURCE,
       ...manifestFields,
@@ -107,6 +108,11 @@ export function createMockFsLayer(souls: MockSoulManifest[] = [MOCK_SOUL_MANIFES
     if (examples) {
       if (examples.good) fileSystem[`${soulDir}/${examples.good}`] = "";
       if (examples.bad) fileSystem[`${soulDir}/${examples.bad}`] = "";
+    }
+    if (contents) {
+      for (const [path, body] of Object.entries(contents)) {
+        fileSystem[`${soulDir}/${path}`] = body;
+      }
     }
   }
 

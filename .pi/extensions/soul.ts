@@ -9,6 +9,7 @@ import {
   registerSoulListCommand,
   registerSoulCommand,
   registerSoulInfoCommand,
+  registerSoulHeartbeatCommand,
 } from "../../src/commands";
 import {
   registerSessionStartHandler,
@@ -45,6 +46,7 @@ export default function piSoulAgent(pi: ExtensionAPI) {
   registerSoulListCommand(pi, runtime);
   registerSoulCommand(pi, runtime);
   registerSoulInfoCommand(pi, runtime);
+  registerSoulHeartbeatCommand(pi, runtime);
 
   // Register event handlers
   registerSessionStartHandler(pi, runtime);

@@ -1,7 +1,12 @@
 import { describe, it, expect } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
-import { parseSoulCommandArgs, heartbeatLevelNotice, activateSoulPipeline } from "../src/commands";
+import {
+  parseSoulCommandArgs,
+  heartbeatLevelNotice,
+  activateSoulPipeline,
+  soulHeartbeatPipeline,
+} from "../src/commands";
 import { SoulSpecLoader } from "../src/loader";
 import { ActiveSoulPersistence } from "../src/persistence";
 import { createMockFsLayer, DEFAULT_SOURCE } from "./helpers";
@@ -387,5 +392,89 @@ describe("activateSoulPipeline (no cross-soul heartbeatMode inheritance)", () =>
         expect(afterB.value.heartbeatMode).toBe("lite");
       }
     }).pipe(Effect.provide(twoSoulLayer)),
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Command: /soul-heartbeat — manual grounding pipeline
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
+  const HEARTBEAT_BODY = "# HEARTBEAT.md\n\nRe-ground: verify by behavior, not tone.";
+
+  const withContent = [{ name: DEFAULT_SOURCE.name, contents: { "HEARTBEAT.md": HEARTBEAT_BODY } }];
+  const withoutHeartbeatFile = [
+    { name: DEFAULT_SOURCE.name, files: { soul: "SOUL.md", identity: "IDENTITY.md" } },
+  ];
+
+  const mkLayer = (souls: Parameters<typeof createMockFsLayer>[0]) =>
+    Layer.fresh(SoulSpecLoader.Default).pipe(
+      Layer.provideMerge(Layer.fresh(ActiveSoulPersistence.Default)),
+      Layer.provideMerge(createMockFsLayer(souls)),
+      Layer.provideMerge(NodePathLayer),
+    );
+
+  it.effect(
+    "active Level-3 soul with heartbeat content resolves to send, carrying that content",
+    () =>
+      Effect.gen(function* () {
+        const persistence = yield* ActiveSoulPersistence;
+        yield* persistence.save(DEFAULT_SOURCE.name, 3, "lite");
+
+        const result = yield* soulHeartbeatPipeline();
+
+        expect(result._tag).toBe("send");
+        if (result._tag === "send") {
+          expect(result.content).toBe(HEARTBEAT_BODY);
+        }
+      }).pipe(Effect.provide(mkLayer(withContent))),
+  );
+
+  it.effect("heartbeatMode 'off' still resolves to send (mode is ignored)", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.save(DEFAULT_SOURCE.name, 3, "off");
+
+      const result = yield* soulHeartbeatPipeline();
+
+      expect(result._tag).toBe("send");
+      if (result._tag === "send") {
+        expect(result.content).toBe(HEARTBEAT_BODY);
+      }
+    }).pipe(Effect.provide(mkLayer(withContent))),
+  );
+
+  it.effect("no active soul resolves to a no-active-soul refusal", () =>
+    Effect.gen(function* () {
+      const result = yield* soulHeartbeatPipeline();
+      expect(result._tag).toBe("no-active-soul");
+    }).pipe(Effect.provide(mkLayer(withContent))),
+  );
+
+  it.effect(
+    "active soul below Level 3 resolves to a level-too-low refusal carrying the level",
+    () =>
+      Effect.gen(function* () {
+        const persistence = yield* ActiveSoulPersistence;
+        yield* persistence.save(DEFAULT_SOURCE.name, 2, "lite");
+
+        const result = yield* soulHeartbeatPipeline();
+
+        expect(result._tag).toBe("level-too-low");
+        if (result._tag === "level-too-low") {
+          expect(result.level).toBe(2);
+        }
+      }).pipe(Effect.provide(mkLayer(withContent))),
+  );
+
+  it.effect("active Level-3 soul with no heartbeat content resolves to a no-content refusal", () =>
+    Effect.gen(function* () {
+      const persistence = yield* ActiveSoulPersistence;
+      yield* persistence.save(DEFAULT_SOURCE.name, 3, "lite");
+
+      const result = yield* soulHeartbeatPipeline();
+
+      expect(result._tag).toBe("no-heartbeat-content");
+    }).pipe(Effect.provide(mkLayer(withoutHeartbeatFile))),
   );
 });
