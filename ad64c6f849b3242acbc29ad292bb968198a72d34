@@ -2,13 +2,14 @@
 #
 # File index:
 #   docs/adr/0001-heartbeat-anchors-to-activation.md — heartbeat schedule anchors to soul activation
+#   docs/adr/0002-manual-soul-heartbeat-command.md — manual /soul-heartbeat command, independent of the scheduler
 #
 # Anchored to root commit in ref refs/notes/docs-adr. Skills: docs-in-git-notes + domain-modeling.
 
 ===== FILE: docs/adr/0001-heartbeat-anchors-to-activation.md =====
 # Heartbeat schedule anchors to soul activation, not session start
 
-Status: accepted — implementation pending (2026-07-10)
+Status: accepted — implemented + released v1.1.0 (2e0076c, baa64d5, 535dcb0, c28c5b4; review fixes e0d5664). 2026-07-13.
 
 ## Context
 Heartbeat reminders were scheduled on an absolute, session-long turn counter that advanced
@@ -42,3 +43,43 @@ fire at 6, 18, 36, 108 turns after activation, then every 108. `heartbeatMode` w
   "re-onboard" semantic), not preserved across the change.
 - The Level-3 content gate is unchanged: setting a cadence on a sub-Level-3 Soul persists but warns,
   since heartbeat content only loads at Level 3.
+
+===== FILE: docs/adr/0002-manual-soul-heartbeat-command.md =====
+# Manual /soul-heartbeat command, independent of the automatic scheduler
+
+Status: accepted — implementation pending (2026-07-13)
+
+## Context
+HEARTBEAT.md grounding currently fires only on the automatic turn_end schedule (ADR-0001).
+Users want to re-ground the active Soul on demand, not wait for the next scheduled beat.
+
+## Decision
+Add an extension command `soul-heartbeat` (the soul-* command family) that injects the ACTIVE
+Soul's heartbeatContent on demand, reusing the scheduler's exact LLM-facing payload: customType
+"soul-heartbeat-reminder", display:false, wrapped in <soul-heartbeat-reminder type="grounding"
+no-response> … </soul-heartbeat-reminder>. It also emits a notifyUI confirmation so the hidden
+injection is observable.
+
+It is PURELY ADDITIVE: it neither reads nor resets the scheduler's activation-anchored count.
+That count stays lexically private to registerHeartbeatReminderHandler (the isolation ADR-0001
+established). Manual grounding and the automatic cadence are orthogonal.
+
+It IGNORES heartbeatMode entirely. off | lite | full | N govern only the AUTOMATIC cadence; an
+explicit manual invocation overrides that — a manual /soul-heartbeat fires even when the mode is
+"off". Gated only by: an active Soul, level >= 3, and heartbeatContent present — each refusal
+surfaced via notifyUI, never a silent no-op.
+
+## Considered options
+- Reset the auto-cadence on manual fire (rejected): needs a shared handle into the scheduler
+  closure, re-introducing the cross-module coupling ADR-0001 removed; manual grounding is orthogonal
+  to the automatic cadence.
+- Suppress the manual fire when heartbeatMode === "off" (rejected): surprising — the user asked for
+  it by hand; "off" disables automatic firing, not the existence of content to send.
+- Pi-native prompt path (promptPaths) instead of an extension command (rejected): static, resolved
+  at session start from directories, cannot track "the active Soul" at invocation time.
+
+## Consequences
+- Manual and automatic heartbeats share ONE LLM-facing payload shape — no second grounding format.
+- A manual fire one turn before an automatic one double-grounds; harmless (same content; grounding
+  is not damaged by repetition).
+- "Heartbeat mode" narrows in the glossary to "governs the automatic cadence only".
