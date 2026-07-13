@@ -1,4 +1,4 @@
-import { Cause, Effect, Option, pipe } from "effect";
+import { Cause, Data, Effect, Option, pipe } from "effect";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AppRuntime, HeartbeatMode, ParsedSoulCommand, SoulManifest } from "./types";
 import { SoulSpecLoader } from "./loader";
@@ -482,33 +482,35 @@ export function registerSoulInfoCommand(pi: ExtensionAPI, runtime: AppRuntime): 
 // Command: /soul-heartbeat
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SoulHeartbeatResult =
-  | { readonly _tag: "send"; readonly content: string }
-  | { readonly _tag: "no-active-soul" }
-  | { readonly _tag: "level-too-low"; readonly level: number }
-  | { readonly _tag: "no-heartbeat-content" };
+export type SoulHeartbeatResult = Data.TaggedEnum<{
+  Send: { readonly content: string };
+  NoActiveSoul: {};
+  LevelTooLow: { readonly level: number };
+  NoHeartbeatContent: {};
+}>;
+export const SoulHeartbeatResult = Data.taggedEnum<SoulHeartbeatResult>();
 
 export function soulHeartbeatPipeline() {
   return Effect.gen(function* () {
     const persistence = yield* ActiveSoulPersistence;
     const active = yield* persistence.load();
     if (Option.isNone(active)) {
-      return { _tag: "no-active-soul" } satisfies SoulHeartbeatResult;
+      return SoulHeartbeatResult.NoActiveSoul();
     }
 
     const soul = active.value;
     if (soul.level < 3) {
-      return { _tag: "level-too-low", level: soul.level } satisfies SoulHeartbeatResult;
+      return SoulHeartbeatResult.LevelTooLow({ level: soul.level });
     }
 
     const loader = yield* SoulSpecLoader;
     const manifest = yield* loader.getSoul(soul.soul, soul.level);
     const content = Option.fromNullable(manifest.heartbeatContent);
     if (Option.isNone(content)) {
-      return { _tag: "no-heartbeat-content" } satisfies SoulHeartbeatResult;
+      return SoulHeartbeatResult.NoHeartbeatContent();
     }
 
-    return { _tag: "send", content: content.value } satisfies SoulHeartbeatResult;
+    return SoulHeartbeatResult.Send({ content: content.value });
   });
 }
 
@@ -526,43 +528,38 @@ export function registerSoulHeartbeatCommand(pi: ExtensionAPI, runtime: AppRunti
       const result = await runtime.runPromise(
         Effect.matchCause(soulHeartbeatPipeline(), {
           onSuccess: (data) => data,
-          onFailure: (cause) => ({
-            _tag: "error" as const,
-            message: `Error running manual heartbeat: ${Cause.pretty(cause)}`,
-          }),
+          onFailure: (cause) =>
+            ({
+              _tag: "Error" as const,
+              message: `Error running manual heartbeat: ${Cause.pretty(cause)}`,
+            }) as const,
         }),
       );
 
-      if (result._tag === "error") {
+      if (result._tag === "Error") {
         notifyUI(ctx, result.message, "error");
         return;
       }
 
-      if (result._tag === "no-active-soul") {
-        notifyUI(ctx, "No active soul. Use /soul <name> to activate one.", "info");
-        return;
-      }
-
-      if (result._tag === "level-too-low") {
-        notifyUI(
-          ctx,
-          `Heartbeat content loads at Level 3; the active soul is at Level ${result.level}. Re-activate with /soul <name> --level 3 to enable it.`,
-          "info",
-        );
-        return;
-      }
-
-      if (result._tag === "no-heartbeat-content") {
-        notifyUI(ctx, "This soul has no heartbeat content.", "info");
-        return;
-      }
-
-      pi.sendMessage({
-        customType: "soul-heartbeat-reminder",
-        content: `<soul-heartbeat-reminder type="grounding" no-response>\n${result.content}\n</soul-heartbeat-reminder>`,
-        display: false,
+      SoulHeartbeatResult.$match(result, {
+        NoActiveSoul: () =>
+          notifyUI(ctx, "No active soul. Use /soul <name> to activate one.", "info"),
+        LevelTooLow: ({ level }) =>
+          notifyUI(
+            ctx,
+            `Heartbeat content loads at Level 3; the active soul is at Level ${level}. Re-activate with /soul <name> --level 3 to enable it.`,
+            "info",
+          ),
+        NoHeartbeatContent: () => notifyUI(ctx, "This soul has no heartbeat content.", "info"),
+        Send: ({ content }) => {
+          pi.sendMessage({
+            customType: "soul-heartbeat-reminder",
+            content: `<soul-heartbeat-reminder type="grounding" no-response>\n${content}\n</soul-heartbeat-reminder>`,
+            display: false,
+          });
+          notifyUI(ctx, "Heartbeat sent. The active soul has been re-grounded.", "info");
+        },
       });
-      notifyUI(ctx, "Heartbeat sent. The active soul has been re-grounded.", "info");
     },
   });
 }

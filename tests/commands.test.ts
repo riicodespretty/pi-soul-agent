@@ -425,8 +425,8 @@ describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
 
         const result = yield* soulHeartbeatPipeline();
 
-        expect(result._tag).toBe("send");
-        if (result._tag === "send") {
+        expect(result._tag).toBe("Send");
+        if (result._tag === "Send") {
           expect(result.content).toBe(HEARTBEAT_BODY);
         }
       }).pipe(Effect.provide(mkLayer(withContent))),
@@ -439,8 +439,8 @@ describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
 
       const result = yield* soulHeartbeatPipeline();
 
-      expect(result._tag).toBe("send");
-      if (result._tag === "send") {
+      expect(result._tag).toBe("Send");
+      if (result._tag === "Send") {
         expect(result.content).toBe(HEARTBEAT_BODY);
       }
     }).pipe(Effect.provide(mkLayer(withContent))),
@@ -449,7 +449,7 @@ describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
   it.effect("no active soul resolves to a no-active-soul refusal", () =>
     Effect.gen(function* () {
       const result = yield* soulHeartbeatPipeline();
-      expect(result._tag).toBe("no-active-soul");
+      expect(result._tag).toBe("NoActiveSoul");
     }).pipe(Effect.provide(mkLayer(withContent))),
   );
 
@@ -462,8 +462,8 @@ describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
 
         const result = yield* soulHeartbeatPipeline();
 
-        expect(result._tag).toBe("level-too-low");
-        if (result._tag === "level-too-low") {
+        expect(result._tag).toBe("LevelTooLow");
+        if (result._tag === "LevelTooLow") {
           expect(result.level).toBe(2);
         }
       }).pipe(Effect.provide(mkLayer(withContent))),
@@ -476,7 +476,7 @@ describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
 
       const result = yield* soulHeartbeatPipeline();
 
-      expect(result._tag).toBe("no-heartbeat-content");
+      expect(result._tag).toBe("NoHeartbeatContent");
     }).pipe(Effect.provide(mkLayer(withoutHeartbeatFile))),
   );
 });
