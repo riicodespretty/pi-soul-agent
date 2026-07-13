@@ -64,9 +64,15 @@ _Avoid_: ping, tick
 
 **Heartbeat mode**:
 `off` | `lite` (every 6 turns) | `full` (the mala ramp) | a custom positive integer N
-(every N turns). All measured from the Activation anchor. Stored on the Active Soul;
-defaults to `lite`.
+(every N turns). Governs the AUTOMATIC cadence only, measured from the Activation anchor; the
+Manual heartbeat command ignores it. Stored on the Active Soul; defaults to `lite`.
 _Avoid_: frequency
+
+**Manual heartbeat**:
+A user-triggered grounding: the `soul-heartbeat` command injects the active Soul’s heartbeat
+content on demand, using the same hidden grounding payload as the automatic scheduler and
+independent of it. Ignores Heartbeat mode (fires even when `off`); gated only by active + Level 3 +
+heartbeat content present.
 
 **Mala** / **beads**:
 The cadence spacing `full`-mode Heartbeats: reminders at 6, 18, 36, 108 turns after
