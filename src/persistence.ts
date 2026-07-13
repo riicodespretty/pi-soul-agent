@@ -47,7 +47,7 @@ export class ActiveSoulPersistence extends Effect.Service<ActiveSoulPersistence>
           const exists = yield* fs.exists(filePath);
           if (!exists) return Option.none();
 
-          const parsed = yield* readJsonFile<Record<string, unknown>>(fs, filePath);
+          const parsed = yield* readJsonFile(fs, filePath);
           return S.decodeUnknownOption(ActiveSoulSchema)(parsed);
         }).pipe(
           Effect.catchAll((cause) =>

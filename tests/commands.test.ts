@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import { FileSystem } from "@effect/platform";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import {
   parseSoulCommandArgs,
@@ -10,6 +11,7 @@ import {
 import { SoulSpecLoader } from "../src/loader";
 import { ActiveSoulPersistence } from "../src/persistence";
 import { createMockFsLayer, DEFAULT_SOURCE } from "./helpers";
+import { expandHome } from "../src/services/soul-fs";
 import { vi } from "vitest";
 
 vi.stubEnv("HOME", "/Users/test");
@@ -476,5 +478,20 @@ describe("soulHeartbeatPipeline (manual grounding of the active soul)", () => {
 
       expect(result._tag).toBe("no-heartbeat-content");
     }).pipe(Effect.provide(mkLayer(withoutHeartbeatFile))),
+  );
+});
+
+describe("ActiveSoulPersistence.load — Schema validation at the JSON boundary", () => {
+  it.effect("wrong-shape but syntactically-valid active-soul JSON is rejected as Option.none", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const filePath = yield* expandHome("~/.pi/agent/.active-soul.json");
+      yield* fs.writeFileString(filePath, JSON.stringify({ soul: 123, level: "three" }));
+
+      const persistence = yield* ActiveSoulPersistence;
+      const loaded = yield* persistence.load();
+
+      expect(Option.isNone(loaded)).toBe(true);
+    }).pipe(Effect.provide(fullTestLayer)),
   );
 });

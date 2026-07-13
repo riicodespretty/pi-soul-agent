@@ -206,7 +206,7 @@ export function registerSoulCommand(pi: ExtensionAPI, runtime: AppRuntime): void
       const result = await runtime.runPromise(
         Effect.matchCause(listSoulsPipeline, {
           onSuccess: (souls) => souls,
-          onFailure: () => [] as SoulManifest[],
+          onFailure: (): SoulManifest[] => [],
         }),
       );
       return result
@@ -493,22 +493,22 @@ export function soulHeartbeatPipeline() {
     const persistence = yield* ActiveSoulPersistence;
     const active = yield* persistence.load();
     if (Option.isNone(active)) {
-      return { _tag: "no-active-soul" } as SoulHeartbeatResult;
+      return { _tag: "no-active-soul" } satisfies SoulHeartbeatResult;
     }
 
     const soul = active.value;
     if (soul.level < 3) {
-      return { _tag: "level-too-low", level: soul.level } as SoulHeartbeatResult;
+      return { _tag: "level-too-low", level: soul.level } satisfies SoulHeartbeatResult;
     }
 
     const loader = yield* SoulSpecLoader;
     const manifest = yield* loader.getSoul(soul.soul, soul.level);
     const content = Option.fromNullable(manifest.heartbeatContent);
     if (Option.isNone(content)) {
-      return { _tag: "no-heartbeat-content" } as SoulHeartbeatResult;
+      return { _tag: "no-heartbeat-content" } satisfies SoulHeartbeatResult;
     }
 
-    return { _tag: "send", content: content.value } as SoulHeartbeatResult;
+    return { _tag: "send", content: content.value } satisfies SoulHeartbeatResult;
   });
 }
 

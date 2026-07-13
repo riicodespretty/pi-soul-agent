@@ -108,7 +108,7 @@ export class SoulSpecLoader extends Effect.Service<SoulSpecLoader>()("app/SoulSp
 
         // Cache miss
         const manifestPath = `${soulPath}/soul.json`;
-        const raw = yield* readJsonFile<Record<string, unknown>>(fs, manifestPath);
+        const raw = yield* readJsonFile(fs, manifestPath);
         const manifest = parseManifest(raw);
 
         // Helper: read an optional content file and set the manifest field

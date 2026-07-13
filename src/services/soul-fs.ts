@@ -1,4 +1,4 @@
-import { Effect, Option, Schema as S } from "effect";
+import { Effect, Option, Predicate, Schema as S } from "effect";
 import { FileSystem } from "@effect/platform/FileSystem";
 import { Path } from "@effect/platform/Path";
 import os from "node:os";
@@ -20,7 +20,11 @@ export function expandHome(p: string) {
   });
 }
 
-export function parseManifest(raw: Record<string, unknown>): SoulManifest {
+export function parseManifest(raw: unknown): SoulManifest {
+  if (!Predicate.isRecord(raw)) {
+    return decodeOrThrow(SoulManifestDataSchema, raw);
+  }
+
   const skillsInput = Array.isArray(raw.recommendedSkills)
     ? raw.recommendedSkills
     : Array.isArray(raw.skills)
@@ -33,12 +37,12 @@ export function parseManifest(raw: Record<string, unknown>): SoulManifest {
   });
 }
 
-function decodeOrThrow<A, I>(schema: S.Schema<A, I, never>, input: I): A {
+function decodeOrThrow<A, I>(schema: S.Schema<A, I, never>, input: unknown): A {
   try {
     return S.decodeUnknownSync(schema)(input);
   } catch (cause: unknown) {
     throw new ManifestParseError({
-      message: `Failed to parse manifest: ${(cause as Error).message}`,
+      message: `Failed to parse manifest: ${cause instanceof Error ? cause.message : String(cause)}`,
       cause,
     });
   }
@@ -47,16 +51,17 @@ function decodeOrThrow<A, I>(schema: S.Schema<A, I, never>, input: I): A {
 // ── File reading ──
 
 /**
- * Read and parse a JSON file, returning the typed result.
+ * Read and parse a JSON file, returning the parsed value as `unknown`.
+ * Callers validate the shape via Schema before use.
  */
-export function readJsonFile<T>(
+export function readJsonFile(
   fs: FileSystem,
   soulPath: string,
-): Effect.Effect<T, FileSystemError | ManifestParseError> {
+): Effect.Effect<unknown, FileSystemError | ManifestParseError> {
   return fs.readFileString(soulPath).pipe(
     Effect.flatMap((content) =>
       Effect.try({
-        try: () => JSON.parse(content) as T,
+        try: (): unknown => JSON.parse(content),
         catch: (cause) =>
           new ManifestParseError({
             message: `Failed to parse ${soulPath}`,

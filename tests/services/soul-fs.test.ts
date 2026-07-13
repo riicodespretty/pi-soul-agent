@@ -3,7 +3,9 @@ import { Effect } from "effect";
 import { vi } from "vitest";
 import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import os from "node:os";
-import { resolveOsHomeDir, expandHome } from "../../src/services/soul-fs";
+import { resolveOsHomeDir, expandHome, parseManifest } from "../../src/services/soul-fs";
+import { ManifestParseError } from "../../src/errors";
+import { DEFAULT_SOURCE } from "../helpers";
 
 describe("resolveOsHomeDir", () => {
   afterEach(() => {
@@ -80,4 +82,23 @@ describe("expandHome", () => {
       expect(result).toBe("~other/path");
     }),
   );
+});
+
+describe("parseManifest — Schema validation at the JSON boundary", () => {
+  it("rejects a non-object (null) with ManifestParseError instead of crashing", () => {
+    expect(() => parseManifest(null)).toThrow(ManifestParseError);
+  });
+
+  it("rejects a primitive (number) with ManifestParseError", () => {
+    expect(() => parseManifest(42)).toThrow(ManifestParseError);
+  });
+
+  it("rejects a wrong-shape object (name is a number) with ManifestParseError", () => {
+    expect(() => parseManifest({ ...DEFAULT_SOURCE, name: 123 })).toThrow(ManifestParseError);
+  });
+
+  it("accepts a well-formed manifest object", () => {
+    const manifest = parseManifest(DEFAULT_SOURCE);
+    expect(manifest.name).toBe(DEFAULT_SOURCE.name);
+  });
 });
