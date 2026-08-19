@@ -94,7 +94,26 @@ Run `/soul-heartbeat` to ground the active soul **right now**, without waiting f
 
 ## Installation
 
-### As a Pi package (recommended)
+### As an OMP plugin (recommended)
+
+```bash
+omp plugin install git:github.com/riicodespretty/pi-soul-agent
+# also works:
+# omp plugin install github:riicodespretty/pi-soul-agent
+# omp plugin install https://github.com/riicodespretty/pi-soul-agent
+```
+
+### Updating
+
+Re-run the same install command after you push — it updates the existing `pi-soul-agent` install in place (no `--force` needed). Restart OMP to reload the extension.
+
+```bash
+omp plugin install git:github.com/riicodespretty/pi-soul-agent
+# pinned to a tag:
+# omp plugin install git:github.com/riicodespretty/pi-soul-agent#v1.2.1
+```
+
+### As a Pi package (legacy)
 
 ```bash
 pi install git:github.com/riicodespretty/pi-soul-agent
