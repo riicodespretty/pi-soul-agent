@@ -64,5 +64,10 @@
     "extensions": [
       ".pi/extensions/soul.ts"
     ]
-  }
+  },
+  "trustedDependencies": [
+    "@google/genai",
+    "@parcel/watcher",
+    "protobufjs"
+  ]
 }
