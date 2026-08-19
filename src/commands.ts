@@ -4,6 +4,7 @@ import type { AppRuntime, HeartbeatMode, ParsedSoulCommand, SoulManifest } from 
 import { SoulSpecLoader } from "./loader";
 import { ActiveSoulPersistence } from "./persistence";
 import { buildSystemPrompt } from "./system-prompt";
+import { renderHeartbeatNotice } from "./heartbeat-notice";
 import { notifyUI } from "./helpers/notify-ui";
 
 export function parseSoulCommandArgs(args: string): ParsedSoulCommand {
@@ -554,7 +555,7 @@ export function registerSoulHeartbeatCommand(pi: ExtensionAPI, runtime: AppRunti
         Send: ({ content }) => {
           pi.sendMessage({
             customType: "soul-heartbeat-reminder",
-            content: `<soul-heartbeat-reminder type="grounding" no-response>\n${content}\n</soul-heartbeat-reminder>`,
+            content: renderHeartbeatNotice(content),
             display: false,
           });
           notifyUI(ctx, "Heartbeat sent. The active soul has been re-grounded.", "info");

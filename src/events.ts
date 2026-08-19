@@ -6,6 +6,7 @@ import { SOUL_SEARCH_PATHS, SoulSpecLoader } from "./loader";
 import { ActiveSoulPersistence } from "./persistence";
 import { expandHome } from "./services/soul-fs";
 import { buildSystemPrompt } from "./system-prompt";
+import { renderHeartbeatNotice } from "./heartbeat-notice";
 import { notifyUI } from "./helpers/notify-ui";
 
 interface ResourcesDiscoverResult {
@@ -105,11 +106,10 @@ export function registerHeartbeatReminderHandler(pi: ExtensionAPI, runtime: AppR
     const beatKey = `${result.identity}#${count}`;
     if (_heartbeatCoordinator.servicedKey === beatKey) return;
     _heartbeatCoordinator.servicedKey = beatKey;
-
     // Rationale [5] → git notes docs-code-rationale: docs/rationale/events.md
     pi.sendMessage({
       customType: "soul-heartbeat-reminder",
-      content: `<soul-heartbeat-reminder type="grounding" no-response>\n${result.content}\n</soul-heartbeat-reminder>`,
+      content: renderHeartbeatNotice(result.content),
       display: false,
     });
   });

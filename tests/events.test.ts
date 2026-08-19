@@ -148,11 +148,11 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: "lite" };
     const { firedAt, sent } = await drive(15, (t) => (t >= 7 ? soul : null));
     expect(firedAt).toEqual([13]);
-    // The reminder is hidden from the visible conversation and XML-wrapped.
     expect(sent).toHaveLength(1);
     expect(sent[0].display).toBe(false);
     expect(sent[0].customType).toBe("soul-heartbeat-reminder");
-    expect(sent[0].content).toContain("<soul-heartbeat-reminder");
+    expect(sent[0].content).toContain("<system-notice>");
+    expect(sent[0].content).toContain("Soul heartbeat grounding");
   });
 
   it("still fires when a soul activates well past the old turn-6 wedge point (issue #1 cannot recur)", async () => {
@@ -190,14 +190,13 @@ describe("registerHeartbeatReminderHandler — activation-anchored scheduler", (
   });
 
   it("fires a custom integer mode N every N turns from activation", async () => {
-    // Rationale [7] → git notes docs-code-rationale: docs/rationale/events.test.md
     const soul: SoulState = { soul: "zen", updatedAt: 100, level: 3, mode: 4 };
     const { firedAt, sent } = await drive(15, () => soul);
     expect(firedAt).toEqual([5, 9, 13]);
     expect(sent[0].display).toBe(false);
     expect(sent[0].customType).toBe("soul-heartbeat-reminder");
+    expect(sent[0].content).toContain("<system-notice>");
   });
-
   it("anchors a custom integer mode to a mid-session activation", async () => {
     // Custom N=3 activates at turn 5. The activation turn (5) is count 0 and does
     // NOT fire; the schedule restarts and beats land every 3 → turns 8, 11, 14.
